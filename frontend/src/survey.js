@@ -1043,6 +1043,8 @@ export class SurveyEngine {
       let inner = '';
       if (sq.type === Q_TYPE.SINGLE) {
         inner = this.renderOptions(sq, 'radio');
+      } else if (sq.type === Q_TYPE.SINGLE_WITH_OTHER) {
+        inner = this.renderOptions(sq, 'radio', true);
       } else if (sq.type === Q_TYPE.MULTI_WITH_OTHER || sq.type === Q_TYPE.MULTI_LIMIT_OTHER) {
         inner = this.renderOptions(sq, 'checkbox', true);
       } else if (sq.type === Q_TYPE.MULTI) {
@@ -1162,6 +1164,21 @@ export class SurveyEngine {
         const row = parseInt(rowStr);
         const val = parseInt(radio.value);
         let resp = this.getResponse(qid) || {};
+
+        // uniqueColumns: 같은 val을 다른 row가 이미 갖고 있으면 자동 해제 (한 순위 = 한 항목)
+        const q = this.findQuestion(qid);
+        if (q && Array.isArray(q.uniqueColumns) && q.uniqueColumns.includes(val)) {
+          for (const otherRow of Object.keys(resp)) {
+            if (parseInt(otherRow) !== row && resp[otherRow] === val) {
+              delete resp[otherRow];
+              const otherRadio = this.container.querySelector(
+                `input[name="${qid}_${otherRow}"][value="${val}"]`
+              );
+              if (otherRadio) otherRadio.checked = false;
+            }
+          }
+        }
+
         resp[row] = val;
         this.setResponse(qid, resp);
 

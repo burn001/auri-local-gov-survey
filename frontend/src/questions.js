@@ -273,7 +273,7 @@ export const sections = [
         type: Q_TYPE.SUB_QUESTIONS,
         subQuestions: [
           { id: 'Q17_2_name', label: '계획명', type: Q_TYPE.TEXT, placeholder: '예) ○○시 청사 중장기 유지관리 계획' },
-          { id: 'Q17_2_cycle', label: '계획 주기', type: Q_TYPE.SINGLE, options: ['연간', '3년', '5년', '기타'] },
+          { id: 'Q17_2_cycle', label: '계획 주기', type: Q_TYPE.SINGLE_WITH_OTHER, options: ['연간', '3년', '5년'], otherLabel: '기타' },
         ],
       },
     ],
@@ -443,8 +443,9 @@ export const sections = [
         id: 'Q23',
         text: 'Q23. 청사 유지관리의 효율성을 높이기 위한 개선사항의 우선순위를 매겨 주세요. 각 항목에 1위(최우선)~5위 또는 "해당 없음"을 지정하세요.',
         type: Q_TYPE.LIKERT_TABLE,
-        note: '각 행(개선사항)에 대해 순위 열을 선택합니다. 중복 없이 부여하는 것이 이상적이나, 중복 응답도 집계 가능합니다.',
+        note: '각 순위(1~5위)는 한 항목에만 지정할 수 있습니다. 다른 항목으로 같은 순위를 선택하면 기존 항목의 순위가 자동 해제됩니다. ("해당 없음"은 여러 항목에 중복 선택 가능)',
         scaleLabels: ['1위', '2위', '3위', '4위', '5위', '해당 없음'],
+        uniqueColumns: [1, 2, 3, 4, 5],  // 라디오 값 1~5 (1위~5위)는 unique. 6(해당없음)은 중복 허용
         items: [
           '① 유지관리 예산 증액',
           '② 인력 보강 및 전담 조직 설립',
