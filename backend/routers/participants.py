@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
+from uuid import uuid4
 from services.db import get_db
 from services.email_service import render_email, send_email
 from services.admin_auth import verify_admin_token
@@ -10,6 +11,8 @@ from config import get_settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_EMAIL_TYPES = {"invite", "reminder", "deadline", "custom"}
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -196,6 +199,7 @@ async def list_participants(
 class EmailSendRequest(BaseModel):
     tokens: list[str]
     subject: str = "지방자치단체 청사 관리 실태조사 참여 요청 (AURI)"
+    type: str = "invite"  # invite | reminder | deadline | custom
 
 
 @router.post("/email/preview", response_class=HTMLResponse)
@@ -214,8 +218,17 @@ async def send_survey_emails(
     if not s.GMAIL_USER or not s.GMAIL_APP_PASSWORD:
         raise HTTPException(500, "Gmail 설정이 없습니다.")
 
+    email_type = body.type if body.type in ALLOWED_EMAIL_TYPES else "custom"
+    batch_id = uuid4().hex[:12]
     db = get_db()
-    results = {"sent": 0, "failed": 0, "skipped": 0, "errors": []}
+    results = {
+        "batch_id": batch_id,
+        "type": email_type,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "errors": [],
+    }
 
     for token in body.tokens:
         p = await db.participants.find_one({"token": token})
@@ -225,23 +238,90 @@ async def send_survey_emails(
 
         survey_url = f"{s.SURVEY_BASE_URL}/?token={token}"
         html = render_email(p.get("name", ""), p.get("org", ""), survey_url)
+        now = datetime.now(timezone.utc)
+
+        log_doc = {
+            "batch_id": batch_id,
+            "token": token,
+            "email": p["email"],
+            "name": p.get("name", ""),
+            "org": p.get("org", ""),
+            "category": p.get("category", ""),
+            "type": email_type,
+            "subject": body.subject,
+            "admin_email": admin.get("email", ""),
+            "admin_name": admin.get("name", ""),
+            "sent_at": now,
+        }
 
         try:
             send_email(p["email"], body.subject, html)
+            log_doc.update({"status": "sent", "error": ""})
+            await db.email_logs.insert_one(log_doc)
             await db.participants.update_one(
                 {"token": token},
-                {"$set": {
+                [{"$set": {
                     "email_sent": True,
-                    "email_sent_at": datetime.now(timezone.utc),
-                }},
+                    "email_sent_at": now,  # legacy compat
+                    "email_last_sent_at": now,
+                    "email_first_sent_at": {"$ifNull": ["$email_first_sent_at", now]},
+                    "email_sent_count": {"$add": [{"$ifNull": ["$email_sent_count", 0]}, 1]},
+                    "email_last_status": "sent",
+                    "email_last_type": email_type,
+                    "email_last_error": "",
+                }}],
             )
             results["sent"] += 1
         except Exception as e:
-            logger.error(f"Email failed for {p['email']}: {e}")
+            err_msg = str(e)
+            logger.error(f"Email failed for {p['email']}: {err_msg}")
+            log_doc.update({"status": "failed", "error": err_msg})
+            await db.email_logs.insert_one(log_doc)
+            await db.participants.update_one(
+                {"token": token},
+                {"$set": {
+                    "email_last_status": "failed",
+                    "email_last_attempt_at": now,
+                    "email_last_type": email_type,
+                    "email_last_error": err_msg,
+                }},
+            )
             results["failed"] += 1
-            results["errors"].append({"token": token, "email": p["email"], "error": str(e)})
+            results["errors"].append({"token": token, "email": p["email"], "error": err_msg})
 
     return results
+
+
+@router.get("/email/logs")
+async def list_email_logs(
+    admin: dict = Depends(verify_admin_token),
+    token: Optional[str] = None,
+    status: Optional[str] = None,
+    type: Optional[str] = None,
+    batch_id: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 200,
+):
+    db = get_db()
+    query: dict = {}
+    if token:
+        query["token"] = token
+    if status:
+        query["status"] = status
+    if type:
+        query["type"] = type
+    if batch_id:
+        query["batch_id"] = batch_id
+
+    total = await db.email_logs.count_documents(query)
+    cursor = (
+        db.email_logs.find(query, {"_id": 0})
+        .sort("sent_at", -1)
+        .skip(skip)
+        .limit(min(limit, 1000))
+    )
+    items = [doc async for doc in cursor]
+    return {"total": total, "count": len(items), "data": items}
 
 
 @router.get("/email/history")
@@ -250,12 +330,31 @@ async def email_history(
     category: Optional[str] = None,
 ):
     db = get_db()
-    query: dict = {"email_sent": True}
+    p_query: dict = {"email_sent": True}
     if category:
-        query["category"] = category
-    sent_count = await db.participants.count_documents(query)
+        p_query["category"] = category
+    sent_count = await db.participants.count_documents(p_query)
     total = await db.participants.count_documents({"category": category} if category else {})
-    return {"sent": sent_count, "total": total}
+
+    log_total = await db.email_logs.count_documents({})
+    log_sent = await db.email_logs.count_documents({"status": "sent"})
+    log_failed = await db.email_logs.count_documents({"status": "failed"})
+
+    by_type_cursor = db.email_logs.aggregate([
+        {"$match": {"status": "sent"}},
+        {"$group": {"_id": "$type", "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ])
+    by_type = {doc["_id"] or "unknown": doc["count"] async for doc in by_type_cursor}
+
+    return {
+        "unique_recipients_sent": sent_count,
+        "total_participants": total,
+        "log_total": log_total,
+        "log_sent": log_sent,
+        "log_failed": log_failed,
+        "by_type": by_type,
+    }
 
 
 # ── Admin Management (admins 관리) ──

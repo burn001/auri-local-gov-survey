@@ -59,3 +59,20 @@ class StatsOut(BaseModel):
     total_participants: int
     total_responses: int
     by_category: dict[str, dict[str, int]]
+
+
+class EmailLog(BaseModel):
+    """1 row per email send attempt (success or failure)."""
+    batch_id: str
+    token: str
+    email: str
+    name: str = ""
+    org: str = ""
+    category: str = ""
+    type: str = "invite"  # invite | reminder | deadline | custom
+    subject: str
+    status: str  # sent | failed
+    error: str = ""
+    admin_email: str = ""
+    admin_name: str = ""
+    sent_at: datetime = Field(default_factory=datetime.utcnow)

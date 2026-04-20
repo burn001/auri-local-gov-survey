@@ -23,6 +23,10 @@ async def connect():
     await _db.participants_backup.create_index([("token", 1), ("version", -1)])
     await _db.admins.create_index("token", unique=True)
     await _db.admins.create_index("email", unique=True)
+    await _db.email_logs.create_index([("token", 1), ("sent_at", -1)])
+    await _db.email_logs.create_index([("sent_at", -1)])
+    await _db.email_logs.create_index("batch_id")
+    await _db.email_logs.create_index("status")
 
 
 async def disconnect():

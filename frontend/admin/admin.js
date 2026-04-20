@@ -184,13 +184,31 @@ function renderParticipants() {
       <th>발송</th><th>응답</th><th>토큰</th>
     </tr></thead>
     <tbody>${rows.map(p => {
-      const sentTime = p.email_sent_at ? `${fmtKST(p.email_sent_at)}<br><span style="color:var(--text3);font-size:11px">${relTime(p.email_sent_at)}</span>` : '';
-      const sendBadge = p.email_sent
-        ? `<span class="badge badge-green">발송</span><div style="font-size:11px;color:var(--text3);margin-top:2px">${sentTime}</div>`
-        : '<span class="badge badge-gray">미발송</span>';
+      const count = p.email_sent_count || 0;
+      const lastAt = p.email_last_sent_at || p.email_sent_at;
+      const lastStatus = p.email_last_status || (p.email_sent ? 'sent' : '');
+      const lastType = p.email_last_type || '';
+      const typeLabel = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자' }[lastType] || '';
+      const sentTime = lastAt ? `${fmtKST(lastAt)}<br><span style="color:var(--text3);font-size:11px">${relTime(lastAt)}</span>` : '';
+
+      let sendBadge;
+      if (lastStatus === 'failed') {
+        sendBadge = `<span class="badge badge-red">실패</span>` +
+          (p.email_last_error ? `<div style="font-size:10px;color:#c00;margin-top:2px;max-width:160px;word-break:break-all">${(p.email_last_error || '').slice(0, 60)}</div>` : '');
+      } else if (count > 0 || p.email_sent) {
+        sendBadge = `<span class="badge badge-green">발송 ${count || 1}회</span>` +
+          (typeLabel ? `<span style="font-size:10px;color:var(--text3);margin-left:4px">${typeLabel}</span>` : '') +
+          `<div style="font-size:11px;color:var(--text3);margin-top:2px">${sentTime}</div>`;
+      } else {
+        sendBadge = '<span class="badge badge-gray">미발송</span>';
+      }
+      const logBtn = (count > 0 || lastStatus === 'failed')
+        ? `<button class="btn-log" title="발송 이력" onclick="showEmailLogs('${p.token}', '${(p.name || '').replace(/'/g, "\\'")}')">📜</button>`
+        : '';
+
       const respBadge = p.responded
         ? `<span class="badge badge-blue">응답</span><div style="font-size:11px;color:var(--text3);margin-top:2px">${fmtKST(p.response_submitted_at)}</div>`
-        : (p.email_sent ? '<span class="badge badge-orange">미응답</span>' : '<span class="badge badge-gray">-</span>');
+        : ((count > 0 || p.email_sent) ? '<span class="badge badge-orange">미응답</span>' : '<span class="badge badge-gray">-</span>');
       const link = `${SURVEY_BASE}/?token=${p.token}`;
       return `<tr>
         <td class="checkbox-col"><input type="checkbox" ${pSelected.has(p.token) ? 'checked' : ''} onchange="toggleRowSelect('${p.token}', this.checked)"></td>
@@ -198,7 +216,7 @@ function renderParticipants() {
         <td>${p.org || ''}</td>
         <td><span class="badge badge-blue">${p.category || ''}</span></td>
         <td style="font-size:12px">${p.email}</td>
-        <td style="min-width:170px">${sendBadge}</td>
+        <td style="min-width:180px">${sendBadge} ${logBtn}</td>
         <td style="min-width:150px">${respBadge}</td>
         <td><code style="font-size:11px;cursor:pointer" title="클릭하여 링크 복사" onclick="navigator.clipboard.writeText('${link}');toast('링크 복사됨')">${p.token}</code></td>
       </tr>`;
@@ -244,31 +262,96 @@ document.getElementById('p-resp-status').addEventListener('change', () => { pPag
 
 async function sendSelected() {
   if (pSelected.size === 0) return;
-  if (!confirm(`${pSelected.size}명에게 설문 이메일을 발송합니다. 계속할까요?`)) return;
-  await runSend([...pSelected]);
+  const type = await promptEmailType(pSelected.size);
+  if (!type) return;
+  await runSend([...pSelected], type);
 }
 
 async function sendToUnresponded() {
-  const targets = pFilteredView.filter(p => p.email_sent && !p.responded).map(p => p.token);
+  const targets = pFilteredView.filter(p => (p.email_sent_count || 0) > 0 || p.email_sent).filter(p => !p.responded).map(p => p.token);
   if (targets.length === 0) { toast('현재 뷰에 미응답 대상이 없습니다', 'error'); return; }
-  if (!confirm(`현재 필터에 해당하는 미응답자 ${targets.length}명에게 재발송합니다. 계속할까요?`)) return;
-  await runSend(targets);
+  if (!confirm(`현재 필터에 해당하는 미응답자 ${targets.length}명에게 추가 요청 메일을 발송합니다. 계속할까요?`)) return;
+  await runSend(targets, 'reminder');
 }
 
-async function runSend(tokens) {
+function promptEmailType(count) {
+  return new Promise((resolve) => {
+    const typeLabels = {
+      invite: '① 초대 (invite)',
+      reminder: '② 추가 요청 (reminder)',
+      deadline: '③ 마감 알림 (deadline)',
+    };
+    const msg = `${count}명에게 이메일을 발송합니다.\n\n` +
+      `발송 타입을 선택하세요:\n` +
+      `  1 = 초대 (최초 발송)\n` +
+      `  2 = 추가 요청 (리마인더)\n` +
+      `  3 = 마감 알림\n\n` +
+      `번호 입력 (취소하려면 빈 값):`;
+    const input = prompt(msg, '1');
+    if (!input) return resolve(null);
+    const map = { '1': 'invite', '2': 'reminder', '3': 'deadline' };
+    const type = map[input.trim()] || null;
+    if (!type) { toast('잘못된 입력', 'error'); return resolve(null); }
+    if (!confirm(`${typeLabels[type]} 타입으로 ${count}명에게 발송합니다. 계속할까요?`)) return resolve(null);
+    resolve(type);
+  });
+}
+
+async function runSend(tokens, type = 'invite') {
   const btn = document.getElementById('btn-send');
   btn.disabled = true;
   btn.textContent = `발송 중 (${tokens.length})...`;
   try {
     const result = await api('/api/admin/email/send', {
       method: 'POST',
-      body: JSON.stringify({ tokens }),
+      body: JSON.stringify({ tokens, type }),
     });
-    toast(`발송 완료: ${result.sent}건 성공${result.failed ? `, ${result.failed}건 실패` : ''}`);
+    toast(`발송 완료 [${type}]: ${result.sent}건 성공${result.failed ? `, ${result.failed}건 실패` : ''}`);
     await loadParticipants(pPage);
   } catch (e) {
     toast('발송 실패: ' + e.message, 'error');
   }
+}
+
+// ── Email Log Modal ──
+async function showEmailLogs(token, name) {
+  try {
+    const data = await api(`/api/admin/email/logs?token=${encodeURIComponent(token)}&limit=100`);
+    const logs = data.data || [];
+    const typeLabels = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자' };
+
+    const rows = logs.map(l => {
+      const statusBadge = l.status === 'sent'
+        ? '<span class="badge badge-green">성공</span>'
+        : '<span class="badge badge-red">실패</span>';
+      return `<tr>
+        <td style="font-size:11px">${fmtKST(l.sent_at)}<br><span style="color:var(--text3);font-size:10px">${relTime(l.sent_at)}</span></td>
+        <td>${statusBadge}</td>
+        <td><span class="badge badge-blue">${typeLabels[l.type] || l.type || '-'}</span></td>
+        <td style="font-size:11px">${l.subject || ''}</td>
+        <td style="font-size:11px">${l.admin_name || l.admin_email || ''}</td>
+        <td style="font-size:10px;color:#c00;max-width:240px;word-break:break-all">${l.error || ''}</td>
+      </tr>`;
+    }).join('');
+
+    const body = logs.length === 0
+      ? '<p style="text-align:center;color:var(--text3);padding:40px">이력이 없습니다.</p>'
+      : `<table class="log-table">
+          <thead><tr><th>시각</th><th>상태</th><th>타입</th><th>제목</th><th>발송자</th><th>오류</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+
+    document.getElementById('log-modal-title').textContent = `이메일 발송 이력 — ${name} (${logs.length}건)`;
+    document.getElementById('log-modal-body').innerHTML = body;
+    document.getElementById('log-modal').style.display = 'flex';
+  } catch (e) {
+    toast('이력 조회 실패: ' + e.message, 'error');
+  }
+}
+
+function closeLogModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('log-modal').style.display = 'none';
 }
 
 function exportParticipantLinks() {

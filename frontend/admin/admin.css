@@ -163,6 +163,38 @@ tr:hover { background: #fafbfc; }
 .badge-gray { background: #f3f4f6; color: #6b7280; }
 .badge-blue { background: #eff6ff; color: #2563eb; }
 .badge-orange { background: #fff7ed; color: #c2410c; }
+.badge-red { background: #fef2f2; color: #dc2626; }
+
+.btn-log {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.btn-log:hover { background: var(--surface-2, #f3f4f6); }
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.log-table th,
+.log-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.log-table th {
+  background: #f9fafb;
+  font-weight: 600;
+  font-size: 11px;
+  color: #4b5563;
+}
 
 /* ── Category bar ── */
 .cat-bar {
