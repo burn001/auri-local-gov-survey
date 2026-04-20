@@ -845,8 +845,11 @@ export class SurveyEngine {
       html += this.renderQuestion(q);
       if (this.isReviewer()) {
         if (q.type === Q_TYPE.SUB_QUESTIONS) {
-          for (const sq of q.subQuestions) {
-            html += this.renderReviewerThread(sq.id);
+          // sub-question별 스레드는 renderSubQuestions 내부에서 이미 sub-item 바로 아래에 주입됨.
+          // parent qid 스레드는 (마이그레이션 등으로) 코멘트가 있을 때만 노출 (빈 폼 중복 방지).
+          const parentCount = (this.threads[q.id] || []).length;
+          if (parentCount > 0) {
+            html += this.renderReviewerThread(q.id);
           }
         } else {
           html += this.renderReviewerThread(q.id);
@@ -1069,6 +1072,9 @@ export class SurveyEngine {
           <p class="question-error" data-error="${sq.id}"></p>
         </div>
       `;
+      if (this.isReviewer()) {
+        html += this.renderReviewerThread(sq.id);
+      }
     }
     html += '</div></div>';
     return html;

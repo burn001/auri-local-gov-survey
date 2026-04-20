@@ -625,6 +625,11 @@ body {
   border: 1px dashed #f59e0b;
   border-radius: var(--radius-sm, 6px);
 }
+
+/* sub-question-group 내부에 들어가는 스레드는 위 sub-question에 시각적으로 붙도록 마진 축소 */
+.sub-question-group > .reviewer-thread {
+  margin: -12px 8px 0;
+}
 .thread-header {
   display: flex;
   align-items: center;
