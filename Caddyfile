@@ -1,0 +1,27 @@
+{
+  https_port 8443
+}
+
+alris.ddns.net:8443 {
+  handle_path /small-housing/* {
+    reverse_proxy localhost:8002
+  }
+  handle_path /lg/* {
+    reverse_proxy localhost:8003
+  }
+  handle /api/survey/* {
+    reverse_proxy localhost:8001
+  }
+  handle /api/responses* {
+    reverse_proxy localhost:8001
+  }
+  handle /api/health {
+    reverse_proxy localhost:8001
+  }
+  handle /api/admin/* {
+    reverse_proxy localhost:8001
+  }
+  handle {
+    reverse_proxy localhost:8000
+  }
+}

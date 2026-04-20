@@ -2,7 +2,9 @@ import { sections, Q_TYPE, SURVEY_META } from './questions.js';
 
 const STORAGE_KEY = 'auri_survey_responses';
 const STORAGE_PAGE_KEY = 'auri_survey_page';
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+const API_BASE = import.meta.env.VITE_API_BASE || (
+  location.hostname === 'localhost' ? '' : 'https://alris.ddns.net:8443/lg'
+);
 
 const GATE = {
   LOADING: 'loading',
