@@ -636,6 +636,12 @@ body {
   color: #92400e;
   margin-left: 6px;
 }
+.reviewer-comment-status {
+  float: right;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+}
 .reviewer-comment-input {
   width: 100%;
   border: 1px solid #f59e0b33;

@@ -27,8 +27,15 @@ async def get_stats(admin: dict = Depends(verify_admin_token)):
     db = get_db()
 
     total_p = await db.participants.count_documents({})
-    total_r = await db.responses.count_documents({})
+    total_r = await db.responses.count_documents({"submitted_at": {"$ne": None}})
 
+    submitted_filter = {
+        "$filter": {
+            "input": "$resp",
+            "as": "r",
+            "cond": {"$ne": ["$$r.submitted_at", None]},
+        }
+    }
     pipeline = [
         {"$lookup": {
             "from": "responses",
@@ -39,7 +46,7 @@ async def get_stats(admin: dict = Depends(verify_admin_token)):
         {"$group": {
             "_id": "$category",
             "participants": {"$sum": 1},
-            "responded": {"$sum": {"$cond": [{"$gt": [{"$size": "$resp"}, 0]}, 1, 0]}},
+            "responded": {"$sum": {"$cond": [{"$gt": [{"$size": submitted_filter}, 0]}, 1, 0]}},
         }},
         {"$sort": {"_id": 1}},
     ]
@@ -69,6 +76,7 @@ async def list_responses(
     db = get_db()
 
     pipeline = [
+        {"$match": {"submitted_at": {"$ne": None}}},
         {"$lookup": {
             "from": "participants",
             "localField": "token",
@@ -108,6 +116,7 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
     from fastapi.responses import StreamingResponse
 
     pipeline = [
+        {"$match": {"submitted_at": {"$ne": None}}},
         {"$lookup": {
             "from": "participants",
             "localField": "token",
@@ -176,8 +185,13 @@ async def list_participants(
         {"$match": match},
         {"$lookup": {
             "from": "responses",
-            "localField": "token",
-            "foreignField": "token",
+            "let": {"tk": "$token"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$token", "$$tk"]},
+                    {"$ne": ["$submitted_at", None]},
+                ]}}},
+            ],
             "as": "resp",
         }},
         {"$addFields": {

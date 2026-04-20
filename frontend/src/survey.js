@@ -32,6 +32,8 @@ export class SurveyEngine {
     this.gate = this.token ? GATE.LOADING : GATE.DENIED;
     this.responses = this.loadResponses();
     this.comments = this.loadComments();
+    this.commentSyncTimer = null;
+    this.commentSyncStatus = '';  // '', 'saving', 'saved', 'error'
     this.currentPage = 0;
     this.visibleSections = [];
     this.editingParticipant = false;
@@ -104,10 +106,50 @@ export class SurveyEngine {
     const val = (this.comments && this.comments[qid]) || '';
     return `
       <div class="reviewer-comment" data-qid="${qid}">
-        <div class="reviewer-comment-header">💬 연구진 수정 요청 메모 <span class="reviewer-comment-sub">(응답자에게 보이지 않음)</span></div>
+        <div class="reviewer-comment-header">
+          💬 연구진 수정 요청 메모 <span class="reviewer-comment-sub">(응답자에게 보이지 않음, 자동 저장)</span>
+          <span class="reviewer-comment-status" data-status-for="${qid}"></span>
+        </div>
         <textarea class="reviewer-comment-input" data-cqid="${qid}" rows="2" placeholder="이 문항에 대한 수정 요청 / 표현 개선 / 오탈자 등을 입력하세요.">${this.escape(val)}</textarea>
       </div>
     `;
+  }
+
+  scheduleCommentSync() {
+    if (!this.isReviewer() || !this.token) return;
+    if (this.commentSyncTimer) clearTimeout(this.commentSyncTimer);
+    this.setCommentStatus('saving');
+    this.commentSyncTimer = setTimeout(() => this.flushCommentsToServer(), 1200);
+  }
+
+  async flushCommentsToServer() {
+    if (!this.isReviewer() || !this.token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/comments`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comments: { ...this.comments } }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.setCommentStatus('saved');
+      setTimeout(() => this.setCommentStatus(''), 2500);
+    } catch (e) {
+      console.warn('comment sync failed', e);
+      this.setCommentStatus('error');
+    }
+  }
+
+  setCommentStatus(status) {
+    this.commentSyncStatus = status;
+    const text = status === 'saving' ? '저장 중…'
+      : status === 'saved' ? '✓ 저장됨'
+      : status === 'error' ? '⚠ 저장 실패 (로컬에는 유지)'
+      : '';
+    const color = status === 'error' ? '#dc2626' : status === 'saved' ? '#059669' : '#6b7280';
+    this.container.querySelectorAll('.reviewer-comment-status').forEach(el => {
+      el.textContent = text;
+      el.style.color = color;
+    });
   }
 
   getResponse(id) { return this.responses[id]; }
@@ -764,6 +806,14 @@ export class SurveyEngine {
         const qid = el.dataset.cqid;
         this.comments[qid] = el.value;
         this.saveComments();
+        this.scheduleCommentSync();
+      });
+      el.addEventListener('blur', () => {
+        if (this.commentSyncTimer) {
+          clearTimeout(this.commentSyncTimer);
+          this.commentSyncTimer = null;
+        }
+        this.flushCommentsToServer();
       });
     });
 
