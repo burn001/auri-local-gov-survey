@@ -1,0 +1,581 @@
+// 지방자치단체 청사 관리 실태조사 — v1
+// 「청사 관리에 관한 법률(가칭)」 제정을 위한 지자체 청사 관리 실태조사
+
+export const SURVEY_META = {
+  title: '「청사 관리에 관한 법률(가칭)」 제정을 위한 지방자치단체 청사 관리 실태조사',
+  subtitle: '전국 광역·기초 지방자치단체 청사 관리 담당자 대상',
+  institution: '건축공간연구원 (AURI) · 협조: 행정안전부',
+  researcher: '김영현 연구위원 · 윤호선 연구원',
+  contact: 'yhkim@auri.re.kr / hsyoon@auri.re.kr',
+  duration: '약 20~25분',
+  version: 'v1',
+};
+
+export const Q_TYPE = {
+  SINGLE: 'single',
+  MULTI: 'multi',
+  MULTI_LIMIT: 'multi_limit',
+  LIKERT_TABLE: 'likert_table',
+  TEXT: 'text',
+  SINGLE_WITH_OTHER: 'single_other',
+  MULTI_WITH_OTHER: 'multi_other',
+  MULTI_LIMIT_OTHER: 'multi_limit_other',
+  SUB_QUESTIONS: 'sub_questions',
+};
+
+const AGREE_5 = ['전혀 동의하지 않음', '동의하지 않음', '보통', '동의함', '매우 동의함'];
+const NEED_5 = ['전혀 불필요', '불필요', '보통', '필요', '매우 필요'];
+const FEEL_5 = ['전혀 그렇지 않다', '그렇지 않다', '보통이다', '그렇다', '매우 그렇다'];
+
+export const sections = [
+  // ───────────────── Part Ⅰ. 응답자 및 기관 정보 ─────────────────
+  {
+    id: 'partI',
+    title: 'Part Ⅰ. 응답자 및 기관 정보',
+    subtitle: '본 설문은 사전 배포된 개별 링크로만 참여 가능합니다. 응답 내용은 통계 목적으로만 사용됩니다.',
+    tag: '기본 정보',
+    questions: [
+      {
+        id: 'Q1',
+        text: '응답자가 소속된 지방자치단체의 유형을 선택해 주세요.',
+        type: Q_TYPE.SINGLE,
+        options: ['광역자치단체 (시·도)', '기초자치단체 (시·군·구)'],
+      },
+      {
+        id: 'Q2',
+        text: '소속 지방자치단체명을 입력해 주세요.',
+        type: Q_TYPE.TEXT,
+        placeholder: '예) 세종특별자치시 / 대전광역시 유성구',
+      },
+      {
+        id: 'Q3',
+        text: '소속 부서와 직급을 입력해 주세요.',
+        type: Q_TYPE.SUB_QUESTIONS,
+        subQuestions: [
+          { id: 'Q3_dept', label: '부서명 (국·실/과/팀)', type: Q_TYPE.TEXT, placeholder: '예) 총무과 청사관리팀' },
+          { id: 'Q3_rank', label: '직급', type: Q_TYPE.TEXT, placeholder: '예) 주무관, 팀장' },
+        ],
+      },
+      {
+        id: 'Q4',
+        text: '연락처 정보 (이메일만 필수, 나머지는 선택)',
+        type: Q_TYPE.SUB_QUESTIONS,
+        note: '이메일은 설문 결과 요약본 회신 및 추가 문의 대응 목적으로만 사용합니다.',
+        subQuestions: [
+          { id: 'Q4_name', label: '성명 (선택)', type: Q_TYPE.TEXT, placeholder: '선택 입력' },
+          { id: 'Q4_phone', label: '사무실 번호 (선택)', type: Q_TYPE.TEXT, placeholder: '예) 044-000-0000' },
+          { id: 'Q4_email', label: '이메일 (필수)', type: Q_TYPE.TEXT, placeholder: 'example@domain.go.kr' },
+        ],
+      },
+      {
+        id: 'Q5',
+        text: '응답자가 관리를 담당하는 청사의 유형을 선택해 주세요. (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        options: ['본청', '의회', '직속기관 (사업소·보건소 등)'],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅱ. 실무조직 및 담당 업무 ─────────────────
+  {
+    id: 'partII',
+    title: 'Part Ⅱ. 실무조직 및 담당 업무',
+    subtitle: '「시설물의 안전 및 유지관리에 관한 특별법」 제2조제11호에 따른 "유지관리"는 시설물 기능 보전을 위한 점검·정비·보수·개량 활동을 의미합니다.',
+    tag: '조직·업무',
+    questions: [
+      {
+        id: 'Q6',
+        text: '귀 기관의 청사 유지관리 실무 담당 인력 현황을 기입해 주세요. (인원이 없는 유형은 "0")',
+        type: Q_TYPE.SUB_QUESTIONS,
+        subQuestions: [
+          { id: 'Q6_gongmuwon', label: '① 전담 유지관리 인력 — 공무원 (명)', type: Q_TYPE.TEXT, placeholder: '숫자' },
+          { id: 'Q6_gongmujik', label: '② 전담 유지관리 인력 — 공무직 (명)', type: Q_TYPE.TEXT, placeholder: '숫자' },
+          { id: 'Q6_outsource', label: '③ 외부 용역 또는 계약직 인력 (명)', type: Q_TYPE.TEXT, placeholder: '숫자' },
+          { id: 'Q6_etc', label: '④ 기타 인력 (명)', type: Q_TYPE.TEXT, placeholder: '없으면 0' },
+          { id: 'Q6_etc_desc', label: '    기타 내용 (해당 시)', type: Q_TYPE.TEXT, placeholder: '어떤 인력인지 기술' },
+        ],
+      },
+      {
+        id: 'Q7',
+        text: '귀 기관의 청사 유지관리 업무 운영 방식은 다음 중 어디에 해당합니까?',
+        type: Q_TYPE.SINGLE_WITH_OTHER,
+        options: [
+          '전담 운영 (유지관리 전담부서, 공무원 직접 관리)',
+          '위탁 운영 (관리공단 또는 민간업체)',
+          '혼합 운영 (자체 관리 + 유지보수 일부 위탁)',
+          '타 부서에서 유지관리 업무 병행',
+        ],
+      },
+      {
+        id: 'Q8',
+        text: '유지관리 실무 담당자의 주요 업무 유형은 무엇입니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        options: [
+          '시설 점검 및 유지보수 계획 수립',
+          '청사 보수공사 발주 및 감독',
+          '청사 관리 예산 편성 및 운영',
+          '에너지 관리 (전력·수도·냉난방)',
+          '안전 관리 (소방·재난 대응·보안)',
+          '환경 관리 (청소·폐기물 처리·친환경 설비)',
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅲ. 청사 노후도 및 수명 인식 ─────────────────
+  {
+    id: 'partIII',
+    title: 'Part Ⅲ. 청사 노후도 및 수명 인식',
+    subtitle: '공공청사의 노후 기준 및 적정 수명에 관한 인식을 확인합니다.',
+    tag: '노후도',
+    questions: [
+      {
+        id: 'Q9',
+        text: '공공청사의 적정 "노후 기준"은 준공 후 몇 년이라고 생각하십니까?',
+        type: Q_TYPE.SINGLE,
+        note: '참고: 현행 기준은 30년입니다.',
+        options: [
+          '20년 미만',
+          '20년 이상 ~ 25년 미만',
+          '25년 이상 ~ 30년 미만',
+          '30년 이상 ~ 35년 미만 (현행)',
+          '35년 이상 ~ 40년 미만',
+          '40년 이상',
+        ],
+      },
+      {
+        id: 'Q10',
+        text: '현재 근무 중인 청사가 "노후화되었다"고 느끼십니까?',
+        type: Q_TYPE.SINGLE,
+        options: FEEL_5,
+      },
+      {
+        id: 'Q11',
+        text: '적정 유지관리·리모델링이 수반될 경우, 청사가 행정 기능을 안정적으로 수행할 수 있는 최대 수명은 어느 정도라고 보십니까?',
+        type: Q_TYPE.SINGLE,
+        options: ['20년 이하', '21년 ~ 30년', '31년 ~ 40년', '41년 ~ 50년', '51년 이상'],
+      },
+    ],
+  },
+
+  // ── 조건부: Q10에서 ④(그렇다) 또는 ⑤(매우 그렇다) 응답자만 ──
+  {
+    id: 'partIII_branch',
+    title: 'Part Ⅲ-1. 청사 노후화 세부 요인',
+    subtitle: '앞 문항에서 청사가 노후화되었다고 응답하신 경우에만 해당됩니다.',
+    tag: '조건부',
+    showWhen: { qid: 'Q10', in: [3, 4] },
+    questions: [
+      {
+        id: 'Q10_1',
+        text: '(Q10-1) 노후화되었다고 느끼시는 주된 이유는 무엇입니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        options: [
+          '외관 및 마감재 열화',
+          '잦은 설비 고장 (냉난방·배관 등)',
+          '공간 협소 및 업무환경 악화',
+          '에너지 효율 저하 (춥거나 더움)',
+          '보안 및 방재 시스템 낙후',
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅳ. 청사 수급 및 공간 규모 ─────────────────
+  {
+    id: 'partIV',
+    title: 'Part Ⅳ. 청사 수급 및 공간 규모의 적정성',
+    subtitle: '청사 면적·공간의 적정성 및 수급 과정의 애로사항을 확인합니다.',
+    tag: '수급·공간',
+    questions: [
+      {
+        id: 'Q12',
+        text: '현재 청사 면적이 행정 수요(업무공간·정원·민원인 등) 대비 적정하다고 보십니까?',
+        type: Q_TYPE.SINGLE,
+        options: FEEL_5,
+      },
+      {
+        id: 'Q13',
+        text: '현재 지방자치단체 청사 면적은 인구수 기준의 최고 면적 상한이 적용되고 있습니다. 현행 기준에 대해 어떻게 생각하십니까?',
+        type: Q_TYPE.SINGLE,
+        options: [
+          '적절하다',
+          '부적절하다 — 디지털 전환·기능 복합화 등 실제 공간 수요 반영이 어렵다',
+          '부적절하다 — 상한 자체가 과다하여 조정이 필요하다',
+          '잘 모르겠다',
+        ],
+      },
+      {
+        id: 'Q14',
+        text: '청사의 신축·증축·임차 등 수급 과정에서 가장 큰 걸림돌은 무엇이라고 보십니까? (단일 응답)',
+        type: Q_TYPE.SINGLE_WITH_OTHER,
+        options: [
+          '사업계획 구상 (사업계획 수립 및 건축 기획)',
+          '예산 확보 (중기재정계획 반영·투자심사 등)',
+          '협의 및 심의절차 (의회 등)',
+          '주민 반대 및 여론 부담',
+          '경직된 법적 면적 상한 규제',
+        ],
+      },
+      {
+        id: 'Q15',
+        text: '청사 수급 및 공간 관리에서 가장 시급히 개선이 필요한 분야는 무엇입니까? (최대 3개 선택)',
+        type: Q_TYPE.MULTI_LIMIT_OTHER,
+        limit: 3,
+        options: [
+          '주민 편의시설 및 커뮤니티 공간 확충',
+          '스마트워크/공유형 업무공간 도입',
+          '재난 대응 및 보안 공간 강화',
+          '노후 청사 리모델링 및 성능 개선',
+          '디지털 전환 대응 공간 (데이터센터·무인민원 등)',
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅴ. 유지관리 정책·사업 및 운영 실태 ─────────────────
+  {
+    id: 'partV',
+    title: 'Part Ⅴ. 유지관리 정책·사업 및 운영 실태',
+    subtitle: '자체 관리 업무 범위, 실태조사·관리계획 수립 여부를 확인합니다.',
+    tag: '운영 실태',
+    questions: [
+      {
+        id: 'Q16',
+        text: '귀 기관에서 유지관리 외에 다음과 같은 자산관리 또는 성능개선 업무를 병행하고 있습니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        exclusive: 3,
+        options: [
+          '리모델링 또는 증·개축 사업 기획 및 수행',
+          '중장기 시설 투자계획 수립',
+          '외부 평가 (노후도·안전성 등) 대응 및 자료 작성',
+          '해당 없음 (배타 선택)',
+        ],
+      },
+      {
+        id: 'Q17',
+        text: '법정 정기점검·안전점검 외에 건축물 유지관리를 위한 자체 실태조사 또는 관리계획을 수립하고 있습니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI,
+        exclusive: 3,
+        options: [
+          '실태조사를 정기적으로 수행하고 있음',
+          '자체 유지관리 계획을 수립하고 있음',
+          '시설 데이터관리 시스템을 운영하고 있음',
+          '법정업무 외에는 별도 실태조사·관리계획이 없음 (배타 선택)',
+        ],
+      },
+    ],
+  },
+
+  // ── 조건부: Q17에 ① 실태조사 포함 ──
+  {
+    id: 'partV_branch_1',
+    title: 'Part Ⅴ-1. 실태조사 항목 상세',
+    subtitle: '자체 실태조사를 수행하신다고 응답한 경우에만 해당됩니다.',
+    tag: '조건부',
+    showWhen: { qid: 'Q17', includes: 0 },
+    questions: [
+      {
+        id: 'Q17_1',
+        text: '(Q17-1) 현재 수행 중인 자체 실태조사의 주요 항목을 서술해 주세요.',
+        type: Q_TYPE.TEXT,
+        placeholder: '예) 외벽 균열·누수 점검, 설비 고장 이력, 에너지 사용 현황 등',
+      },
+    ],
+  },
+
+  // ── 조건부: Q17에 ② 관리계획 포함 ──
+  {
+    id: 'partV_branch_2',
+    title: 'Part Ⅴ-2. 자체 유지관리 계획 정보',
+    subtitle: '자체 유지관리 계획을 수립하신다고 응답한 경우에만 해당됩니다.',
+    tag: '조건부',
+    showWhen: { qid: 'Q17', includes: 1 },
+    questions: [
+      {
+        id: 'Q17_2',
+        text: '(Q17-2) 수립하고 있는 유지관리 계획의 명칭과 주기를 기입해 주세요.',
+        type: Q_TYPE.SUB_QUESTIONS,
+        subQuestions: [
+          { id: 'Q17_2_name', label: '계획명', type: Q_TYPE.TEXT, placeholder: '예) ○○시 청사 중장기 유지관리 계획' },
+          { id: 'Q17_2_cycle', label: '계획 주기', type: Q_TYPE.SINGLE, options: ['연간', '3년', '5년', '기타'] },
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅴ (이어서) ─────────────────
+  {
+    id: 'partV_continued',
+    title: 'Part Ⅴ. 유지관리 정책·사업 및 운영 실태 (계속)',
+    subtitle: '우선순위 결정 기준 및 최근 5년간 예산 현황을 확인합니다.',
+    tag: '예산·우선순위',
+    questions: [
+      {
+        id: 'Q18',
+        text: '한정된 예산 안에서 복수의 유지관리 사업을 추진해야 할 때, 우선순위 결정의 주된 근거는 무엇입니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        options: [
+          '실태조사 결과 데이터를 기반으로 결정',
+          '유지관리 계획서에 근거하여 결정',
+          '필요 사업 중 중요성·시급성을 관리자가 판단하여 신청',
+          '민원·정책 요구사항을 반영하여 신청',
+        ],
+      },
+      {
+        id: 'Q19',
+        text: '최근 5년간(2021~2025년) 청사 유지관리 관련 예산 편성 내역을 기입해 주세요. (단위: 백만원, 해당 없으면 0)',
+        type: Q_TYPE.SUB_QUESTIONS,
+        note: '각 연도마다 ① 외부 위탁 유지관리, ② 자체 집행 유지관리, ③ 청사 수급(신축·증축·임차) 예산을 입력해 주세요.',
+        subQuestions: [
+          { id: 'Q19_2021_out', label: '2021년 ① 외부 위탁', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2021_in', label: '2021년 ② 자체 집행', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2021_sup', label: '2021년 ③ 청사 수급', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2022_out', label: '2022년 ① 외부 위탁', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2022_in', label: '2022년 ② 자체 집행', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2022_sup', label: '2022년 ③ 청사 수급', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2023_out', label: '2023년 ① 외부 위탁', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2023_in', label: '2023년 ② 자체 집행', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2023_sup', label: '2023년 ③ 청사 수급', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2024_out', label: '2024년 ① 외부 위탁', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2024_in', label: '2024년 ② 자체 집행', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2024_sup', label: '2024년 ③ 청사 수급', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2025_out', label: '2025년 ① 외부 위탁', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2025_in', label: '2025년 ② 자체 집행', type: Q_TYPE.TEXT, placeholder: '백만원' },
+          { id: 'Q19_2025_sup', label: '2025년 ③ 청사 수급', type: Q_TYPE.TEXT, placeholder: '백만원' },
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅴ (Q20) 청사 관리 항목 ─────────────────
+  {
+    id: 'partV_q20',
+    title: 'Part Ⅴ. 현재 관리 중인 청사 관리 항목',
+    subtitle: 'Q20. 각 분야별로 실제 관리 수행 중인 항목을 모두 체크해 주세요. "관리 안 함"은 배타 선택입니다.',
+    tag: '관리 항목',
+    questions: [
+      {
+        id: 'Q20',
+        text: 'Q20. 분야별 실제 관리 중인 항목 선택',
+        type: Q_TYPE.SUB_QUESTIONS,
+        subQuestions: [
+          {
+            id: 'Q20_1',
+            label: '① 구조 및 안전',
+            type: Q_TYPE.MULTI_WITH_OTHER,
+            exclusive: 4,
+            options: [
+              '구조체 손상·변형 (균열·침하 등) 점검',
+              '외벽·지붕·창호 등 건축물 상태 점검',
+              '내진·방재 설계 적용 여부 및 유지 상태 관리',
+              '화재 안전 재료 사용 및 설비 작동 상태 점검',
+              '관리 안 함 (배타 선택)',
+            ],
+          },
+          {
+            id: 'Q20_2',
+            label: '② 설비 성능 및 유지관리',
+            type: Q_TYPE.MULTI_WITH_OTHER,
+            exclusive: 3,
+            options: [
+              '전기·조명·통신 작동 상태 관리',
+              '냉·난방 설비 유지관리',
+              '정기점검 및 유지보수 이력 관리',
+              '관리 안 함 (배타 선택)',
+            ],
+          },
+          {
+            id: 'Q20_3',
+            label: '③ 에너지 효율 및 환경',
+            type: Q_TYPE.MULTI_WITH_OTHER,
+            exclusive: 3,
+            options: [
+              '단열·창호 등 에너지 절감 관리',
+              '친환경 자재 및 설비 사용 관리',
+              '실내 공기질 및 조명 환경 관리',
+              '관리 안 함 (배타 선택)',
+            ],
+          },
+          {
+            id: 'Q20_4',
+            label: '④ 관리운영 체계',
+            type: Q_TYPE.MULTI_WITH_OTHER,
+            exclusive: 5,
+            options: [
+              '시설관리 인력의 전문성 확보 및 조직체계 구축',
+              '운영관리 데이터 수집 및 관리계획 수립',
+              '운영관리 매뉴얼 및 비상대응 체계 구축',
+              '사업 우선순위 결정 방안 및 체계 구축',
+              '갱신계획 및 교체 이력 관리체계 구축',
+              '관리 안 함 (배타 선택)',
+            ],
+          },
+          {
+            id: 'Q20_5',
+            label: '⑤ 이용자 편의 공간',
+            type: Q_TYPE.MULTI_WITH_OTHER,
+            exclusive: 4,
+            options: [
+              '경사로·계단·화장실 등 실내공간 동선·이용 편의성 개선',
+              '휴게·공용·회의실 등 공간 활용 적정성 개선',
+              '주차공간 확보',
+              '시민 이용 편의성(장애인 접근성 포함) 및 시민 개방성 개선',
+              '관리 안 함 (배타 선택)',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅵ. 개선 방향 ─────────────────
+  {
+    id: 'partVI',
+    title: 'Part Ⅵ. 청사 유지관리의 어려움과 개선 방향',
+    subtitle: '현장에서 느끼는 어려움과 필요한 개선 사항을 확인합니다.',
+    tag: '개선 방향',
+    questions: [
+      {
+        id: 'Q21',
+        text: '현재 청사 유지관리에서 가장 어려운 점은 무엇입니까? (최대 3개 선택)',
+        type: Q_TYPE.MULTI_LIMIT_OTHER,
+        limit: 3,
+        options: [
+          '예산 부족으로 정기 유지보수가 어려움',
+          '유지관리 전문 인력 부족',
+          '유지보수 공사 발주 및 행정 절차 복잡',
+          '긴급 유지보수 대응 체계 미흡',
+          '관련 법·기준·지침 부재 또는 불명확',
+        ],
+      },
+      {
+        id: 'Q22',
+        text: '유지관리 예산 집행 시 어려움을 겪는 항목은 무엇입니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        exclusive: 4,
+        options: [
+          '평당 단가 기준 부재로 예산 산출이 어려움',
+          '유지관리·리모델링·신축 간 예산 구분이 어려움',
+          '예산부서의 적정 단가 미비로 예산 산정이 어려움',
+          '사용자 요구사항(민원·업무환경 개선 등) 반영이 어려움',
+          '해당 사항 없음 (배타 선택)',
+        ],
+      },
+      {
+        id: 'Q23',
+        text: 'Q23. 청사 유지관리의 효율성을 높이기 위한 개선사항의 우선순위를 매겨 주세요. 각 항목에 1(최우선)~5위 중 하나를 부여하거나, 해당 없음을 선택하세요.',
+        type: Q_TYPE.SUB_QUESTIONS,
+        note: '각 항목마다 1~5위 중 하나를 선택합니다. 중복 없이 부여하는 것이 이상적이나, 중복 응답도 집계 가능합니다.',
+        subQuestions: [
+          { id: 'Q23_budget', label: '① 유지관리 예산 증액', type: Q_TYPE.SINGLE, options: ['1위', '2위', '3위', '4위', '5위', '해당 없음'] },
+          { id: 'Q23_people', label: '② 인력 보강 및 전담 조직 설립', type: Q_TYPE.SINGLE, options: ['1위', '2위', '3위', '4위', '5위', '해당 없음'] },
+          { id: 'Q23_law', label: '③ 유지관리 기준 및 법제도 개선', type: Q_TYPE.SINGLE, options: ['1위', '2위', '3위', '4위', '5위', '해당 없음'] },
+          { id: 'Q23_smart', label: '④ 스마트 빌딩 관리 시스템 도입', type: Q_TYPE.SINGLE, options: ['1위', '2위', '3위', '4위', '5위', '해당 없음'] },
+          { id: 'Q23_standard', label: '⑤ 중앙 차원의 유지관리 표준 마련', type: Q_TYPE.SINGLE, options: ['1위', '2위', '3위', '4위', '5위', '해당 없음'] },
+        ],
+      },
+      {
+        id: 'Q23_1',
+        text: '(Q23-1) 위 ①~⑤ 외 추가 개선사항이 있다면 서술해 주세요. (선택)',
+        type: Q_TYPE.TEXT,
+        placeholder: '자유 서술',
+      },
+      {
+        id: 'Q24',
+        text: '청사 노후도 평가 기준 마련 시 고려해야 할 요소는 무엇입니까? (최대 4개 선택)',
+        type: Q_TYPE.MULTI_LIMIT_OTHER,
+        limit: 4,
+        options: [
+          '인원 대비 면적 적정성 (업무 인원 및 민원인 등)',
+          '시설물 안전성 (구조물·설비 등)',
+          '고장 빈도 및 유지보수 이력',
+          '청사 내 사용자 불편도 (민원 건수 등)',
+          '청사의 중요도 및 활용도',
+          '에너지 효율성 (에너지 사용량 등)',
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅶ. 청사관리법 제정 필요성 (리커트) ─────────────────
+  {
+    id: 'partVII_1',
+    title: 'Part Ⅶ. 청사관리법 제정 필요성',
+    subtitle: '현행 제도의 한계와 상위 법령 필요성에 대한 인식을 확인합니다.',
+    tag: '제도·법',
+    questions: [
+      {
+        id: 'Q25',
+        text: 'Q25. 다음 각 진술에 대해 어느 정도 동의하십니까? (각 진술별 단일 응답)',
+        type: Q_TYPE.LIKERT_TABLE,
+        note: '응답 방향성을 통일하기 위해 모든 진술을 "필요성·부족함" 관점으로 제시하였습니다.',
+        scaleLabels: AGREE_5,
+        items: [
+          'A. 현행 「공유재산 및 물품 관리법」 중심 체계만으로는 청사 운영·유지관리 지원에 부족하다',
+          'B. 청사 유지관리를 위한 표준화된 제도·기준이 부족하다',
+          'C. 청사만을 위한 상위 법률의 부재로 실무 집행·예산 확보에 어려움이 있다',
+          'D. 체계적인 청사 관리를 위해 상위 법령 제정이 필요하다',
+        ],
+      },
+      {
+        id: 'Q26',
+        text: 'Q26. 상위 법령 제정 시 반영되어야 할 사항에 대해 각 항목의 필요성 수준을 선택해 주세요.',
+        type: Q_TYPE.LIKERT_TABLE,
+        scaleLabels: NEED_5,
+        items: [
+          'A. 유지관리 계획과 예산 편성의 연계를 통한 안정적 재원 확보',
+          'B. 표준화된 유지관리 및 성능진단 기준',
+          'C. 중앙정부의 지원 근거 (기술 지원·컨설팅 등)',
+          'D. 물리 보안과 사이버 보안을 아우르는 통합 보안 체계',
+          'E. 이용자 편의 및 시민 개방성 확보',
+        ],
+      },
+    ],
+  },
+
+  // ───────────────── Part Ⅶ. 정부 역할 및 지원 범위 ─────────────────
+  {
+    id: 'partVII_2',
+    title: 'Part Ⅶ. 정부 역할과 지원 범위',
+    subtitle: '중앙정부의 역할 방향과 요구되는 지원을 확인합니다.',
+    tag: '정부 역할',
+    questions: [
+      {
+        id: 'Q27',
+        text: '향후 중앙정부의 청사 관리 역할은 어떤 방향으로 설정되어야 한다고 생각하십니까?',
+        type: Q_TYPE.SINGLE,
+        note: '정부 개입 수준과 지자체 자율성의 균형을 묻는 질문입니다.',
+        options: [
+          '통합 관리형 — 국가 차원의 통합 표준을 수립하고 실태를 직접 점검·감독 (자율성 최소)',
+          '협력 관리형 — 국가는 표준·가이드라인을 제시하고, 지자체는 지역 특성 반영 운영 (자율성 중간)',
+          '자율 관리형 — 국가는 법적 근거·지원만 제공하고, 관리 방식·기준은 지자체가 결정 (자율성 최대)',
+        ],
+      },
+      {
+        id: 'Q28',
+        text: '중앙정부가 제공해야 할 지원의 범위는 무엇이라고 보십니까? (복수 응답 가능)',
+        type: Q_TYPE.MULTI_WITH_OTHER,
+        options: [
+          '성능 진단 및 자산관리 컨설팅',
+          '표준 유지관리 매뉴얼·지침 보급',
+          '통합 청사관리시스템 (G-FMS) 보급·교육',
+          '유지관리 예산 국고 보조',
+          '전문 인력 교육·양성 프로그램 운영',
+        ],
+      },
+      {
+        id: 'Q29',
+        text: '(Q29) 청사관리법 제정 시 반드시 포함되어야 할 조항이나 제도가 있다면 구체적으로 제안해 주세요. (선택)',
+        type: Q_TYPE.TEXT,
+        placeholder: '예) 지자체별 청사 통합 DB 구축 의무, 노후도 진단 주기 법정화 등',
+      },
+      {
+        id: 'Q30',
+        text: '(Q30) 청사 유지관리와 관련하여 추가적으로 제안·건의하고 싶은 사항이 있으면 자유롭게 기재해 주세요. (선택)',
+        type: Q_TYPE.TEXT,
+        placeholder: '자유 서술',
+      },
+    ],
+  },
+];

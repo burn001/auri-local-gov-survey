@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>청사 관리 실태조사 관리자 | AURI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<!-- Login -->
+<div id="login" class="login-wrap">
+  <div class="login-box">
+    <h2>청사 관리 실태조사 Admin</h2>
+    <p>관리자 전용 토큰을 입력하세요</p>
+    <input type="password" id="admin-token-input" placeholder="Admin Token (24자리)" autofocus>
+    <button onclick="doLogin()">로그인</button>
+    <p id="login-error" style="color:var(--red);font-size:12px;margin-top:8px"></p>
+    <p style="font-size:11px;color:#999;margin-top:12px">※ 개별 관리자마다 고유 토큰이 발급됩니다. 토큰 URL로 접속 시 자동 로그인됩니다.</p>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app" class="app" style="display:none">
+  <nav class="sidebar">
+    <h1>Local Gov Survey</h1>
+    <p class="subtitle">청사 관리 실태조사</p>
+    <p id="admin-profile" style="font-size:11px;color:#94a3b8;margin:4px 0 20px"></p>
+    <a class="nav-item active" data-page="dashboard">대시보드</a>
+    <a class="nav-item" data-page="participants">대상자 & 이메일</a>
+    <a class="nav-item" data-page="responses">응답 조회</a>
+    <a class="nav-item" style="margin-top:auto;color:#666;font-size:12px" onclick="logout()">로그아웃</a>
+  </nav>
+
+  <div class="main">
+    <!-- Dashboard -->
+    <div id="page-dashboard" class="page active">
+      <h2 class="page-title">대시보드</h2>
+      <div id="stat-cards" class="stat-grid"></div>
+      <div id="cat-bars" class="cat-bar"></div>
+    </div>
+
+    <!-- Participants & Email -->
+    <div id="page-participants" class="page">
+      <h2 class="page-title">대상자 & 이메일</h2>
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <input type="text" id="p-search" placeholder="이름·지자체·이메일 검색...">
+          <select id="p-category">
+            <option value="">전체 구분</option>
+            <option value="광역자치단체">광역자치단체</option>
+            <option value="기초자치단체">기초자치단체</option>
+            <option value="미분류">미분류</option>
+          </select>
+          <select id="p-send-status">
+            <option value="">발송: 전체</option>
+            <option value="unsent">미발송만</option>
+            <option value="sent">발송완료만</option>
+          </select>
+          <select id="p-resp-status">
+            <option value="">응답: 전체</option>
+            <option value="unresponded">미응답만</option>
+            <option value="responded">응답완료만</option>
+          </select>
+          <button class="btn btn-blue btn-sm" id="btn-send" disabled onclick="sendSelected()">선택 발송 (0)</button>
+          <button class="btn btn-outline btn-sm" onclick="sendToUnresponded()">미응답자 재발송</button>
+          <button class="btn btn-outline btn-sm" onclick="previewEmail()">이메일 미리보기</button>
+          <button class="btn btn-outline btn-sm" onclick="exportParticipantLinks()">링크 CSV</button>
+        </div>
+        <div id="p-table"></div>
+        <div id="p-pagination" class="pagination"></div>
+      </div>
+    </div>
+
+    <!-- Responses -->
+    <div id="page-responses" class="page">
+      <h2 class="page-title">응답 조회</h2>
+      <div style="display:flex;gap:12px;margin-bottom:16px">
+        <select id="r-category">
+          <option value="">전체 구분</option>
+          <option value="광역자치단체">광역자치단체</option>
+          <option value="기초자치단체">기초자치단체</option>
+          <option value="미분류">미분류</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadResponses()">조회</button>
+        <button class="btn btn-primary btn-sm" onclick="downloadCSV()">CSV 내보내기</button>
+      </div>
+      <div class="table-wrap">
+        <div id="r-table"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Email Preview Modal -->
+<div id="preview-modal" class="modal-backdrop" style="display:none" onclick="closePreview(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span>이메일 미리보기</span>
+      <button class="modal-close" onclick="closePreview()" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body" id="preview-body"></div>
+  </div>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>
