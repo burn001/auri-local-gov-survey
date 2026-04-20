@@ -22,6 +22,11 @@ async def verify_token(token: str):
         "category": participant.get("category", ""),
         "field": participant.get("field", ""),
         "phone": participant.get("phone", ""),
+        "dept": participant.get("dept", ""),
+        "team": participant.get("team", ""),
+        "position": participant.get("position", ""),
+        "rank": participant.get("rank", ""),
+        "duty": participant.get("duty", ""),
         "has_responded": existing is not None,
         "responses": existing.get("responses") if existing else None,
         "submitted_at": existing.get("submitted_at").isoformat() if existing and existing.get("submitted_at") else None,
@@ -78,6 +83,11 @@ async def update_participant(token: str, body: ParticipantUpdate, request: Reque
             "org": updated.get("org", ""),
             "phone": updated.get("phone", ""),
             "category": updated.get("category", ""),
+            "dept": updated.get("dept", ""),
+            "team": updated.get("team", ""),
+            "position": updated.get("position", ""),
+            "rank": updated.get("rank", ""),
+            "duty": updated.get("duty", ""),
         },
     }
 

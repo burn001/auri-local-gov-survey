@@ -503,6 +503,13 @@ body {
   padding: 10px 16px;
 }
 
+.text-input.sub-text {
+  min-height: auto;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* ── Sub Questions ── */
 .sub-question-group {
   display: flex;
@@ -939,6 +946,18 @@ body {
   font-size: 14px;
   font-weight: 700;
   color: var(--c-text);
+}
+
+.participant-hint {
+  font-size: 12.5px;
+  color: var(--c-text-secondary);
+  line-height: 1.6;
+  margin: 4px 0 14px;
+}
+
+.participant-hint strong {
+  color: var(--c-accent);
+  font-weight: 600;
 }
 
 .btn-link {

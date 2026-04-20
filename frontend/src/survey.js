@@ -260,6 +260,7 @@ export class SurveyEngine {
         <div class="participant-card editing">
           <div class="participant-card-header">
             <h3>내 정보 수정</h3>
+            <p class="participant-hint">부서 이동·인사 변동이 있으셨다면 이 화면에서 갱신해 주십시오.</p>
           </div>
           <div class="participant-form">
             <label>
@@ -271,12 +272,32 @@ export class SurveyEngine {
               <input type="email" id="p-email" value="${this.escape(p.email || '')}" />
             </label>
             <label>
-              <span>소속</span>
+              <span>소속 (시·도 / 시·군·구)</span>
               <input type="text" id="p-org" value="${this.escape(p.org || '')}" />
             </label>
             <label>
-              <span>연락처</span>
-              <input type="tel" id="p-phone" value="${this.escape(p.phone || '')}" placeholder="010-0000-0000" />
+              <span>부서명</span>
+              <input type="text" id="p-dept" value="${this.escape(p.dept || '')}" placeholder="예) 재산관리과" />
+            </label>
+            <label>
+              <span>팀명</span>
+              <input type="text" id="p-team" value="${this.escape(p.team || '')}" placeholder="예) 재산정책팀 (없으면 비워두세요)" />
+            </label>
+            <label>
+              <span>직위</span>
+              <input type="text" id="p-position" value="${this.escape(p.position || '')}" placeholder="예) 팀장, 주무관" />
+            </label>
+            <label>
+              <span>직급</span>
+              <input type="text" id="p-rank" value="${this.escape(p.rank || '')}" placeholder="예) 행정5급, 지방행정서기관" />
+            </label>
+            <label>
+              <span>담당업무</span>
+              <input type="text" id="p-duty" value="${this.escape(p.duty || '')}" placeholder="예) 청사 유지관리 총괄" />
+            </label>
+            <label>
+              <span>사무실 번호</span>
+              <input type="tel" id="p-phone" value="${this.escape(p.phone || '')}" placeholder="02-0000-0000" />
             </label>
           </div>
           ${errHtml}
@@ -294,11 +315,17 @@ export class SurveyEngine {
           <h3>내 정보</h3>
           <button class="btn-link" id="btn-p-edit">수정</button>
         </div>
+        <p class="participant-hint">아래 정보는 응답자 DB에서 미리 채워둔 값입니다. 변경된 사항이 있으면 <strong>수정</strong> 버튼으로 갱신해 주십시오.</p>
         <dl class="participant-info">
           <dt>이름</dt><dd>${this.escape(p.name || '-')}</dd>
           <dt>이메일</dt><dd>${this.escape(p.email || '-')}</dd>
           <dt>소속</dt><dd>${this.escape(p.org || '-')}</dd>
-          <dt>연락처</dt><dd>${this.escape(p.phone || '-')}</dd>
+          <dt>부서</dt><dd>${this.escape(p.dept || '-')}</dd>
+          <dt>팀</dt><dd>${this.escape(p.team || '-')}</dd>
+          <dt>직위</dt><dd>${this.escape(p.position || '-')}</dd>
+          <dt>직급</dt><dd>${this.escape(p.rank || '-')}</dd>
+          <dt>담당업무</dt><dd>${this.escape(p.duty || '-')}</dd>
+          <dt>사무실 번호</dt><dd>${this.escape(p.phone || '-')}</dd>
           <dt>구분</dt><dd class="readonly">${this.escape(p.category || '-')} <span class="hint">(사전 분류)</span></dd>
         </dl>
       </div>
@@ -322,16 +349,18 @@ export class SurveyEngine {
   }
 
   async saveParticipant() {
-    const nameEl = this.container.querySelector('#p-name');
-    const emailEl = this.container.querySelector('#p-email');
-    const orgEl = this.container.querySelector('#p-org');
-    const phoneEl = this.container.querySelector('#p-phone');
+    const val = (id) => this.container.querySelector(`#${id}`)?.value.trim() ?? '';
 
     const payload = {
-      name: nameEl.value.trim(),
-      email: emailEl.value.trim(),
-      org: orgEl.value.trim(),
-      phone: phoneEl.value.trim(),
+      name: val('p-name'),
+      email: val('p-email'),
+      org: val('p-org'),
+      phone: val('p-phone'),
+      dept: val('p-dept'),
+      team: val('p-team'),
+      position: val('p-position'),
+      rank: val('p-rank'),
+      duty: val('p-duty'),
     };
 
     if (!payload.name) {
@@ -576,6 +605,8 @@ export class SurveyEngine {
         inner = this.renderOptions(sq, 'checkbox', true);
       } else if (sq.type === Q_TYPE.MULTI) {
         inner = this.renderOptions(sq, 'checkbox');
+      } else if (sq.type === Q_TYPE.TEXT) {
+        inner = `<input type="text" class="text-input sub-text" data-qid="${sq.id}" placeholder="${sq.placeholder || ''}" />`;
       }
       html += `
         <div class="sub-question" data-qid="${sq.id}">
@@ -728,7 +759,7 @@ export class SurveyEngine {
           }
         }
       } else if (q.type === Q_TYPE.TEXT) {
-        const el = this.container.querySelector(`[data-qid="${q.id}"]`);
+        const el = this.container.querySelector(`input[data-qid="${q.id}"], textarea[data-qid="${q.id}"]`);
         if (el) el.value = val;
       } else if (q.type === Q_TYPE.SINGLE || q.type === Q_TYPE.SINGLE_WITH_OTHER) {
         const list = this.container.querySelector(`.option-list[data-qid="${q.id}"]`);

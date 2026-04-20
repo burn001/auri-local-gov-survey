@@ -11,6 +11,11 @@ class Participant(BaseModel):
     category: str = ""
     field: str = ""
     phone: str = ""
+    dept: str = ""
+    team: str = ""
+    position: str = ""
+    rank: str = ""
+    duty: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -27,6 +32,11 @@ class ParticipantUpdate(BaseModel):
     email: Optional[str] = None
     org: Optional[str] = None
     phone: Optional[str] = None
+    dept: Optional[str] = None
+    team: Optional[str] = None
+    position: Optional[str] = None
+    rank: Optional[str] = None
+    duty: Optional[str] = None
 
 
 class ResponseSubmit(BaseModel):

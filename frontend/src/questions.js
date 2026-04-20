@@ -32,7 +32,7 @@ export const sections = [
   {
     id: 'partI',
     title: 'Part Ⅰ. 응답자 및 기관 정보',
-    subtitle: '본 설문은 사전 배포된 개별 링크로만 참여 가능합니다. 응답 내용은 통계 목적으로만 사용됩니다.',
+    subtitle: '상단 "내 정보" 카드에 부서·직급·연락처가 미리 채워져 있습니다. 변경된 사항이 있으면 "수정" 버튼으로 갱신해 주십시오. 아래 문항은 담당 청사 유형만 확인합니다.',
     tag: '기본 정보',
     questions: [
       {
@@ -40,32 +40,6 @@ export const sections = [
         text: '응답자가 소속된 지방자치단체의 유형을 선택해 주세요.',
         type: Q_TYPE.SINGLE,
         options: ['광역자치단체 (시·도)', '기초자치단체 (시·군·구)'],
-      },
-      {
-        id: 'Q2',
-        text: '소속 지방자치단체명을 입력해 주세요.',
-        type: Q_TYPE.TEXT,
-        placeholder: '예) 세종특별자치시 / 대전광역시 유성구',
-      },
-      {
-        id: 'Q3',
-        text: '소속 부서와 직급을 입력해 주세요.',
-        type: Q_TYPE.SUB_QUESTIONS,
-        subQuestions: [
-          { id: 'Q3_dept', label: '부서명 (국·실/과/팀)', type: Q_TYPE.TEXT, placeholder: '예) 총무과 청사관리팀' },
-          { id: 'Q3_rank', label: '직급', type: Q_TYPE.TEXT, placeholder: '예) 주무관, 팀장' },
-        ],
-      },
-      {
-        id: 'Q4',
-        text: '연락처 정보 (이메일만 필수, 나머지는 선택)',
-        type: Q_TYPE.SUB_QUESTIONS,
-        note: '이메일은 설문 결과 요약본 회신 및 추가 문의 대응 목적으로만 사용합니다.',
-        subQuestions: [
-          { id: 'Q4_name', label: '성명 (선택)', type: Q_TYPE.TEXT, placeholder: '선택 입력' },
-          { id: 'Q4_phone', label: '사무실 번호 (선택)', type: Q_TYPE.TEXT, placeholder: '예) 044-000-0000' },
-          { id: 'Q4_email', label: '이메일 (필수)', type: Q_TYPE.TEXT, placeholder: 'example@domain.go.kr' },
-        ],
       },
       {
         id: 'Q5',
