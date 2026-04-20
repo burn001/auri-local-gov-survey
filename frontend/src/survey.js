@@ -2,10 +2,16 @@ import { sections, Q_TYPE, SURVEY_META } from './questions.js';
 
 const STORAGE_KEY = 'auri_survey_responses';
 const STORAGE_PAGE_KEY = 'auri_survey_page';
-const STORAGE_COMMENTS_KEY = 'auri_survey_comments';
 const API_BASE = import.meta.env.VITE_API_BASE || (
   location.hostname === 'localhost' ? '' : 'https://alris.ddns.net:8443/lg'
 );
+
+const STATUS_META = {
+  open:      { label: '열림',     icon: '📌', color: '#6b7280', bg: '#f3f4f6' },
+  in_review: { label: '검토중',   icon: '🟡', color: '#b45309', bg: '#fef3c7' },
+  resolved:  { label: '반영완료', icon: '🟢', color: '#15803d', bg: '#dcfce7' },
+  rejected:  { label: '보류',     icon: '⚪', color: '#4b5563', bg: '#e5e7eb' },
+};
 
 const GATE = {
   LOADING: 'loading',
@@ -31,16 +37,26 @@ export class SurveyEngine {
     this.editMode = EDIT_MODE.NEW;
     this.gate = this.token ? GATE.LOADING : GATE.DENIED;
     this.responses = this.loadResponses();
-    this.comments = this.loadComments();
-    this.commentSyncTimer = null;
-    this.commentSyncStatus = '';  // '', 'saving', 'saved', 'error'
+    this.threads = {};                // { qid: [comment, ...] } — fetched from server
+    this.threadsLoading = false;
+    this.threadDrafts = {};           // { qid: "draft text" } — top-level new comment
+    this.threadReplyDrafts = {};      // { parent_id: "draft text" } — reply form
+    this.threadOpenReply = null;      // 현재 답글 입력창이 열려 있는 parent_id
+    this.threadOpenEdit = null;       // 현재 편집 중인 comment id
+    this.threadEditDrafts = {};       // { comment_id: "edited text" }
+    this.threadError = '';            // 마지막 스레드 오류 메시지
     this.currentPage = 0;
     this.visibleSections = [];
     this.editingParticipant = false;
     this.participantFormError = '';
 
     if (this.token) {
-      this.verifyToken().then(() => this.render());
+      this.verifyToken().then(async () => {
+        if (this.isReviewer()) {
+          await this.fetchThreads();
+        }
+        this.render();
+      });
     } else {
       this.render();
     }
@@ -60,10 +76,6 @@ export class SurveyEngine {
       if (data.has_responded && data.responses) {
         this.responses = { ...this.responses, ...data.responses };
         this.saveResponses();
-        if (data.comments) {
-          this.comments = { ...this.comments, ...data.comments };
-          this.saveComments();
-        }
         this.submitted = true;
         this.gate = GATE.RESUBMIT_CHOICE;
       } else {
@@ -87,69 +99,350 @@ export class SurveyEngine {
     localStorage.setItem(STORAGE_PAGE_KEY, String(this.currentPage));
   }
 
-  loadComments() {
-    try {
-      const saved = localStorage.getItem(STORAGE_COMMENTS_KEY);
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  }
-
-  saveComments() {
-    localStorage.setItem(STORAGE_COMMENTS_KEY, JSON.stringify(this.comments));
-  }
-
   isReviewer() {
     return this.participant && this.participant.category === '연구진';
   }
 
-  renderReviewerComment(qid) {
-    const val = (this.comments && this.comments[qid]) || '';
-    return `
-      <div class="reviewer-comment" data-qid="${qid}">
-        <div class="reviewer-comment-header">
-          💬 연구진 수정 요청 메모 <span class="reviewer-comment-sub">(응답자에게 보이지 않음, 자동 저장)</span>
-          <span class="reviewer-comment-status" data-status-for="${qid}"></span>
+  // ── Review Comment Threads ──
+  async fetchThreads() {
+    if (!this.isReviewer() || !this.token) return;
+    this.threadsLoading = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/threads`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this.threads = data.threads || {};
+      this.threadError = '';
+    } catch (e) {
+      console.warn('threads fetch failed', e);
+      this.threadError = '코멘트 스레드를 불러오지 못했습니다.';
+    } finally {
+      this.threadsLoading = false;
+    }
+  }
+
+  /** qid에 달린 모든 코멘트(parent + replies)를 부모-자식 트리로 재구성 */
+  buildThreadTree(qid) {
+    const all = this.threads[qid] || [];
+    const byId = new Map(all.map(c => [c.id, { ...c, children: [] }]));
+    const roots = [];
+    for (const node of byId.values()) {
+      if (node.parent_id && byId.has(node.parent_id)) {
+        byId.get(node.parent_id).children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    return roots;
+  }
+
+  renderReviewerThread(qid) {
+    const roots = this.buildThreadTree(qid);
+    const totalCount = (this.threads[qid] || []).length;
+
+    let body = '';
+    if (totalCount === 0) {
+      body = '<p class="thread-empty">아직 등록된 코멘트가 없습니다. 첫 코멘트를 남겨보세요.</p>';
+    } else {
+      body = roots.map(r => this.renderCommentNode(qid, r, 0)).join('');
+    }
+
+    const draft = this.threadDrafts[qid] || '';
+    const newForm = `
+      <div class="thread-new-form">
+        <textarea class="thread-textarea" data-thread-new="${qid}" rows="2"
+          placeholder="이 문항에 대한 검토 의견·수정 요청·논의 사항을 작성하세요.">${this.escape(draft)}</textarea>
+        <div class="thread-form-actions">
+          <button class="btn btn-thread" data-thread-submit="${qid}">코멘트 등록</button>
         </div>
-        <textarea class="reviewer-comment-input" data-cqid="${qid}" rows="2" placeholder="이 문항에 대한 수정 요청 / 표현 개선 / 오탈자 등을 입력하세요.">${this.escape(val)}</textarea>
+      </div>
+    `;
+
+    return `
+      <div class="reviewer-thread" data-qid="${qid}">
+        <div class="thread-header">
+          <span class="thread-title">💬 검토 코멘트</span>
+          <span class="thread-count">${totalCount}건</span>
+          <span class="thread-sub">(연구진·관리자 모두에게 공개)</span>
+          <button class="thread-refresh-btn" data-thread-refresh="${qid}" title="새로고침">↻</button>
+        </div>
+        <div class="thread-body">${body}</div>
+        ${newForm}
       </div>
     `;
   }
 
-  scheduleCommentSync() {
-    if (!this.isReviewer() || !this.token) return;
-    if (this.commentSyncTimer) clearTimeout(this.commentSyncTimer);
-    this.setCommentStatus('saving');
-    this.commentSyncTimer = setTimeout(() => this.flushCommentsToServer(), 1200);
+  async refetchAndRefreshThread(qid) {
+    await this.fetchThreads();
+    this.refreshThread(qid);
   }
 
-  async flushCommentsToServer() {
-    if (!this.isReviewer() || !this.token) return;
+  renderCommentNode(qid, c, depth) {
+    const status = STATUS_META[c.status] || STATUS_META.open;
+    const isMine = c.author_token === this.token;
+    const roleBadge = c.author_role === 'admin'
+      ? '<span class="role-badge role-admin">관리자</span>'
+      : '<span class="role-badge role-reviewer">연구진</span>';
+    const orgPart = c.author_org ? ` · ${this.escape(c.author_org)}` : '';
+    const editedMark = c.updated_at ? ' <span class="edited-mark">(수정됨)</span>' : '';
+
+    const isEditing = this.threadOpenEdit === c.id;
+    const editDraft = this.threadEditDrafts[c.id] ?? c.text;
+
+    const textHtml = isEditing
+      ? `
+        <div class="comment-edit-form">
+          <textarea class="thread-textarea" data-thread-edit="${c.id}" rows="2">${this.escape(editDraft)}</textarea>
+          <div class="thread-form-actions">
+            <button class="btn btn-thread btn-sm" data-thread-edit-save="${c.id}" data-qid="${qid}">저장</button>
+            <button class="btn btn-thread-cancel btn-sm" data-thread-edit-cancel="${c.id}">취소</button>
+          </div>
+        </div>
+      `
+      : `<div class="comment-text">${this.escape(c.text).replace(/\n/g, '<br>')}${editedMark}</div>`;
+
+    const actions = [];
+    actions.push(`<button class="btn-link-sm" data-thread-reply="${c.id}" data-qid="${qid}">↳ 답글</button>`);
+    if (isMine && !isEditing) {
+      actions.push(`<button class="btn-link-sm" data-thread-edit-open="${c.id}">편집</button>`);
+      actions.push(`<button class="btn-link-sm danger" data-thread-delete="${c.id}" data-qid="${qid}">삭제</button>`);
+    }
+
+    const replyOpen = this.threadOpenReply === c.id;
+    const replyDraft = this.threadReplyDrafts[c.id] || '';
+    const replyForm = replyOpen
+      ? `
+        <div class="comment-reply-form">
+          <textarea class="thread-textarea" data-thread-reply-input="${c.id}" rows="2"
+            placeholder="답글 작성…">${this.escape(replyDraft)}</textarea>
+          <div class="thread-form-actions">
+            <button class="btn btn-thread btn-sm" data-thread-reply-submit="${c.id}" data-qid="${qid}">답글 등록</button>
+            <button class="btn btn-thread-cancel btn-sm" data-thread-reply-cancel="${c.id}">취소</button>
+          </div>
+        </div>
+      `
+      : '';
+
+    const childrenHtml = (c.children || [])
+      .map(cc => this.renderCommentNode(qid, cc, depth + 1))
+      .join('');
+
+    return `
+      <div class="comment-node depth-${Math.min(depth, 3)}" data-cid="${c.id}">
+        <div class="comment-card">
+          <div class="comment-meta">
+            <span class="comment-author">${this.escape(c.author_name || '익명')}</span>
+            ${roleBadge}
+            <span class="comment-org">${orgPart}</span>
+            <span class="comment-time">· ${this.formatRelativeTime(c.created_at)}</span>
+            <span class="comment-status" style="background:${status.bg};color:${status.color}">${status.icon} ${status.label}</span>
+          </div>
+          ${textHtml}
+          <div class="comment-actions">${actions.join(' · ')}</div>
+        </div>
+        ${replyForm}
+        ${childrenHtml ? `<div class="comment-children">${childrenHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  // ── Thread API ──
+  async submitNewComment(qid) {
+    const text = (this.threadDrafts[qid] || '').trim();
+    if (!text) {
+      alert('코멘트 내용을 입력해 주세요.');
+      return;
+    }
     try {
-      const res = await fetch(`${API_BASE}/api/survey/${this.token}/comments`, {
-        method: 'PATCH',
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/threads/${qid}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comments: { ...this.comments } }),
+        body: JSON.stringify({ text }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this.setCommentStatus('saved');
-      setTimeout(() => this.setCommentStatus(''), 2500);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (!this.threads[qid]) this.threads[qid] = [];
+      this.threads[qid].push(data.comment);
+      this.threadDrafts[qid] = '';
+      this.refreshThread(qid);
     } catch (e) {
-      console.warn('comment sync failed', e);
-      this.setCommentStatus('error');
+      alert(`코멘트 등록 실패: ${e.message}`);
     }
   }
 
-  setCommentStatus(status) {
-    this.commentSyncStatus = status;
-    const text = status === 'saving' ? '저장 중…'
-      : status === 'saved' ? '✓ 저장됨'
-      : status === 'error' ? '⚠ 저장 실패 (로컬에는 유지)'
-      : '';
-    const color = status === 'error' ? '#dc2626' : status === 'saved' ? '#059669' : '#6b7280';
-    this.container.querySelectorAll('.reviewer-comment-status').forEach(el => {
-      el.textContent = text;
-      el.style.color = color;
+  async submitReply(parentId, qid) {
+    const text = (this.threadReplyDrafts[parentId] || '').trim();
+    if (!text) { alert('답글 내용을 입력해 주세요.'); return; }
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/threads/${qid}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, parent_id: parentId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (!this.threads[qid]) this.threads[qid] = [];
+      this.threads[qid].push(data.comment);
+      this.threadReplyDrafts[parentId] = '';
+      this.threadOpenReply = null;
+      this.refreshThread(qid);
+    } catch (e) {
+      alert(`답글 등록 실패: ${e.message}`);
+    }
+  }
+
+  async submitEdit(commentId, qid) {
+    const text = (this.threadEditDrafts[commentId] || '').trim();
+    if (!text) { alert('내용을 입력해 주세요.'); return; }
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/threads/${qid}/${commentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const list = this.threads[qid] || [];
+      const idx = list.findIndex(c => c.id === commentId);
+      if (idx >= 0) list[idx] = data.comment;
+      this.threadOpenEdit = null;
+      delete this.threadEditDrafts[commentId];
+      this.refreshThread(qid);
+    } catch (e) {
+      alert(`수정 실패: ${e.message}`);
+    }
+  }
+
+  async deleteComment(commentId, qid) {
+    if (!confirm('이 코멘트를 삭제하시겠습니까?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/${this.token}/threads/${qid}/${commentId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.status === 'deleted') {
+        this.threads[qid] = (this.threads[qid] || []).filter(c => c.id !== commentId);
+      } else {
+        // soft_deleted: 본문만 비우고 entry 유지
+        const list = this.threads[qid] || [];
+        const idx = list.findIndex(c => c.id === commentId);
+        if (idx >= 0) list[idx] = { ...list[idx], text: '(작성자가 삭제한 코멘트)' };
+      }
+      this.refreshThread(qid);
+    } catch (e) {
+      alert(`삭제 실패: ${e.message}`);
+    }
+  }
+
+  /** 특정 qid의 thread 영역만 다시 그린다 (전체 페이지 재렌더 회피) */
+  refreshThread(qid) {
+    const wrap = this.container.querySelector(`.reviewer-thread[data-qid="${qid}"]`);
+    if (!wrap) return;
+    wrap.outerHTML = this.renderReviewerThread(qid);
+    // outerHTML 교체 후 같은 qid의 새 wrap을 다시 찾아 그 안에서만 바인딩 (중복 방지)
+    const fresh = this.container.querySelector(`.reviewer-thread[data-qid="${qid}"]`);
+    if (fresh) this.bindThreadEvents(fresh);
+  }
+
+  bindThreadEvents(scope) {
+    if (!this.isReviewer()) return;
+    const root = scope || this.container;
+
+    root.querySelectorAll('[data-thread-new]').forEach(el => {
+      const qid = el.dataset.threadNew;
+      el.addEventListener('input', () => { this.threadDrafts[qid] = el.value; });
     });
+    root.querySelectorAll('[data-thread-submit]').forEach(btn => {
+      btn.addEventListener('click', () => this.submitNewComment(btn.dataset.threadSubmit));
+    });
+
+    root.querySelectorAll('[data-thread-reply]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.threadOpenReply = btn.dataset.threadReply;
+        this.refreshThread(btn.dataset.qid);
+      });
+    });
+    root.querySelectorAll('[data-thread-reply-input]').forEach(el => {
+      const pid = el.dataset.threadReplyInput;
+      el.addEventListener('input', () => { this.threadReplyDrafts[pid] = el.value; });
+    });
+    root.querySelectorAll('[data-thread-reply-submit]').forEach(btn => {
+      btn.addEventListener('click', () => this.submitReply(btn.dataset.threadReplySubmit, btn.dataset.qid));
+    });
+    root.querySelectorAll('[data-thread-reply-cancel]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pid = btn.dataset.threadReplyCancel;
+        this.threadOpenReply = null;
+        delete this.threadReplyDrafts[pid];
+        const card = btn.closest('.comment-node');
+        const qid = card?.closest('.reviewer-thread')?.dataset.qid;
+        if (qid) this.refreshThread(qid);
+      });
+    });
+
+    root.querySelectorAll('[data-thread-edit-open]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cid = btn.dataset.threadEditOpen;
+        this.threadOpenEdit = cid;
+        const card = btn.closest('.comment-node');
+        const qid = card?.closest('.reviewer-thread')?.dataset.qid;
+        const list = this.threads[qid] || [];
+        const c = list.find(x => x.id === cid);
+        if (c) this.threadEditDrafts[cid] = c.text;
+        if (qid) this.refreshThread(qid);
+      });
+    });
+    root.querySelectorAll('[data-thread-edit]').forEach(el => {
+      const cid = el.dataset.threadEdit;
+      el.addEventListener('input', () => { this.threadEditDrafts[cid] = el.value; });
+    });
+    root.querySelectorAll('[data-thread-edit-save]').forEach(btn => {
+      btn.addEventListener('click', () => this.submitEdit(btn.dataset.threadEditSave, btn.dataset.qid));
+    });
+    root.querySelectorAll('[data-thread-edit-cancel]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cid = btn.dataset.threadEditCancel;
+        this.threadOpenEdit = null;
+        delete this.threadEditDrafts[cid];
+        const card = btn.closest('.comment-node');
+        const qid = card?.closest('.reviewer-thread')?.dataset.qid;
+        if (qid) this.refreshThread(qid);
+      });
+    });
+    root.querySelectorAll('[data-thread-delete]').forEach(btn => {
+      btn.addEventListener('click', () => this.deleteComment(btn.dataset.threadDelete, btn.dataset.qid));
+    });
+    root.querySelectorAll('[data-thread-refresh]').forEach(btn => {
+      btn.addEventListener('click', () => this.refetchAndRefreshThread(btn.dataset.threadRefresh));
+    });
+  }
+
+  formatRelativeTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const diff = Date.now() - d.getTime();
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '방금';
+    if (min < 60) return `${min}분 전`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h}시간 전`;
+    const days = Math.floor(h / 24);
+    if (days < 7) return `${days}일 전`;
+    return this.formatDateTime(iso);
   }
 
   getResponse(id) { return this.responses[id]; }
@@ -551,7 +844,13 @@ export class SurveyEngine {
     for (const q of section.questions) {
       html += this.renderQuestion(q);
       if (this.isReviewer()) {
-        html += this.renderReviewerComment(q.id);
+        if (q.type === Q_TYPE.SUB_QUESTIONS) {
+          for (const sq of q.subQuestions) {
+            html += this.renderReviewerThread(sq.id);
+          }
+        } else {
+          html += this.renderReviewerThread(q.id);
+        }
       }
     }
 
@@ -801,21 +1100,7 @@ export class SurveyEngine {
       this.render();
     });
 
-    this.container.querySelectorAll('.reviewer-comment-input').forEach(el => {
-      el.addEventListener('input', () => {
-        const qid = el.dataset.cqid;
-        this.comments[qid] = el.value;
-        this.saveComments();
-        this.scheduleCommentSync();
-      });
-      el.addEventListener('blur', () => {
-        if (this.commentSyncTimer) {
-          clearTimeout(this.commentSyncTimer);
-          this.commentSyncTimer = null;
-        }
-        this.flushCommentsToServer();
-      });
-    });
+    this.bindThreadEvents();
 
     this.container.querySelectorAll('.option-list').forEach(list => {
       const qid = list.dataset.qid;
@@ -1258,9 +1543,6 @@ export class SurveyEngine {
         survey_version: SURVEY_META.version,
         responses: { ...this.responses },
       };
-      if (this.isReviewer() && this.comments && Object.keys(this.comments).length > 0) {
-        payload.comments = { ...this.comments };
-      }
       const res = await fetch(`${API_BASE}/api/responses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

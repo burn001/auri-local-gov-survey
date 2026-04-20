@@ -78,3 +78,38 @@ class EmailLog(BaseModel):
     admin_email: str = ""
     admin_name: str = ""
     sent_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Review Comments (스레드 기반 검토 코멘트) ──
+# survey_version 단위로 공유되는 별도 컬렉션. 모든 연구진/관리자가 서로의 코멘트를 본다.
+
+COMMENT_STATUSES = {"open", "in_review", "resolved", "rejected"}
+COMMENT_ROLES = {"reviewer", "admin"}
+
+
+class ReviewComment(BaseModel):
+    id: str  # uuid hex
+    survey_version: str = "v1"
+    qid: str  # 문항 ID (e.g. "Q5", "Q19")
+    author_role: str  # reviewer | admin
+    author_token: str  # respondent or admin token (소유권 확인용)
+    author_name: str = ""
+    author_email: str = ""
+    author_org: str = ""
+    text: str
+    status: str = "open"  # open | in_review | resolved | rejected
+    parent_id: Optional[str] = None  # 답글일 때 부모 entry id
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
+    status_changed_at: Optional[datetime] = None
+    status_changed_by: str = ""  # 상태 변경자 이름
+
+
+class CommentCreateRequest(BaseModel):
+    text: str
+    parent_id: Optional[str] = None
+
+
+class CommentUpdateRequest(BaseModel):
+    text: Optional[str] = None
+    status: Optional[str] = None  # 관리자만 변경 가능

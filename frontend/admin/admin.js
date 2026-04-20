@@ -412,8 +412,10 @@ async function loadResponses() {
   document.getElementById('r-table').innerHTML = `<table>
     <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>제출일시</th><th>수정일시</th><th>상세</th></tr></thead>
     <tbody>${data.data.map(r => {
-      const hasComments = r.comments && Object.values(r.comments).some(v => (v || '').trim());
-      const commentBadge = hasComments ? '<span class="badge badge-orange" style="margin-left:4px">💬 의견</span>' : '';
+      const cnt = r.comment_count || 0;
+      const commentBadge = cnt > 0
+        ? `<span class="badge badge-orange" style="margin-left:4px">💬 ${cnt}</span>`
+        : '';
       return `<tr>
         <td>${r.name || ''}</td>
         <td>${r.org || ''}</td>
@@ -424,6 +426,337 @@ async function loadResponses() {
       </tr>`;
     }).join('')}</tbody>
   </table>`;
+}
+
+// ── Threads (관리자 측) ──
+const STATUS_META = {
+  open:      { label: '열림',     icon: '📌', color: '#6b7280', bg: '#f3f4f6' },
+  in_review: { label: '검토중',   icon: '🟡', color: '#b45309', bg: '#fef3c7' },
+  resolved:  { label: '반영완료', icon: '🟢', color: '#15803d', bg: '#dcfce7' },
+  rejected:  { label: '보류',     icon: '⚪', color: '#4b5563', bg: '#e5e7eb' },
+};
+
+let THREADS_CACHE = {};         // qid → [comments]
+let THREAD_DRAFTS = {};         // qid → "draft text"
+let THREAD_REPLY_DRAFTS = {};   // parent_id → "draft"
+let THREAD_OPEN_REPLY = null;   // 현재 답글창 열린 parent_id
+let THREAD_OPEN_EDIT = null;    // 현재 편집 중 cid
+let THREAD_EDIT_DRAFTS = {};
+
+async function fetchThreads() {
+  try {
+    const data = await api('/api/admin/threads');
+    THREADS_CACHE = data.threads || {};
+  } catch (e) {
+    console.warn('threads load failed', e);
+    THREADS_CACHE = {};
+  }
+}
+
+function buildTree(qid) {
+  const all = THREADS_CACHE[qid] || [];
+  const byId = new Map(all.map(c => [c.id, { ...c, children: [] }]));
+  const roots = [];
+  for (const node of byId.values()) {
+    if (node.parent_id && byId.has(node.parent_id)) {
+      byId.get(node.parent_id).children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+function fmtRel(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return '방금';
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}시간 전`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}일 전`;
+  return fmtKST(iso);
+}
+
+function renderThreadAdmin(qid) {
+  const roots = buildTree(qid);
+  const totalCount = (THREADS_CACHE[qid] || []).length;
+  const body = totalCount === 0
+    ? '<p class="thread-empty">등록된 코멘트 없음.</p>'
+    : roots.map(r => renderCommentNodeAdmin(qid, r, 0)).join('');
+  const draft = THREAD_DRAFTS[qid] || '';
+  const newForm = `
+    <div class="thread-new-form">
+      <textarea class="thread-textarea" data-thread-new="${qid}" rows="2"
+        placeholder="이 문항에 대한 관리자 코멘트…">${escapeHtml(draft)}</textarea>
+      <div class="thread-form-actions">
+        <button class="btn btn-thread btn-sm" data-thread-submit="${qid}">관리자 코멘트 등록</button>
+      </div>
+    </div>
+  `;
+  return `
+    <div class="reviewer-thread admin-thread" data-qid="${qid}">
+      <div class="thread-header">
+        <span class="thread-title">💬 검토 코멘트 (${qid})</span>
+        <span class="thread-count">${totalCount}건</span>
+        <button class="thread-refresh-btn" data-thread-refresh="${qid}" title="새로고침">↻</button>
+      </div>
+      <div class="thread-body">${body}</div>
+      ${newForm}
+    </div>
+  `;
+}
+
+function renderCommentNodeAdmin(qid, c, depth) {
+  const status = STATUS_META[c.status] || STATUS_META.open;
+  const isMine = c.author_token === ADMIN_TOKEN;
+  const roleBadge = c.author_role === 'admin'
+    ? '<span class="role-badge role-admin">관리자</span>'
+    : '<span class="role-badge role-reviewer">연구진</span>';
+  const orgPart = c.author_org ? ` · ${escapeHtml(c.author_org)}` : '';
+  const editedMark = c.updated_at ? ' <span class="edited-mark">(수정됨)</span>' : '';
+  const isEditing = THREAD_OPEN_EDIT === c.id;
+  const editDraft = THREAD_EDIT_DRAFTS[c.id] ?? c.text;
+
+  const textHtml = isEditing
+    ? `
+      <div class="comment-edit-form">
+        <textarea class="thread-textarea" data-thread-edit="${c.id}" rows="2">${escapeHtml(editDraft)}</textarea>
+        <div class="thread-form-actions">
+          <button class="btn btn-thread btn-sm" data-thread-edit-save="${c.id}" data-qid="${qid}">저장</button>
+          <button class="btn btn-thread-cancel btn-sm" data-thread-edit-cancel="${c.id}">취소</button>
+        </div>
+      </div>
+    `
+    : `<div class="comment-text">${escapeHtml(c.text).replace(/\n/g, '<br>')}${editedMark}</div>`;
+
+  const statusOptions = Object.entries(STATUS_META).map(
+    ([k, v]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${v.icon} ${v.label}</option>`
+  ).join('');
+  const statusChangedNote = c.status_changed_by
+    ? ` <span class="status-changed-note">${fmtRel(c.status_changed_at)} · ${escapeHtml(c.status_changed_by)}</span>`
+    : '';
+
+  const actions = [];
+  actions.push(`<button class="btn-link-sm" data-thread-reply="${c.id}" data-qid="${qid}">↳ 답글</button>`);
+  if (isMine && !isEditing) {
+    actions.push(`<button class="btn-link-sm" data-thread-edit-open="${c.id}">편집</button>`);
+  }
+  actions.push(`<button class="btn-link-sm danger" data-thread-delete="${c.id}" data-qid="${qid}">삭제</button>`);
+
+  const replyOpen = THREAD_OPEN_REPLY === c.id;
+  const replyDraft = THREAD_REPLY_DRAFTS[c.id] || '';
+  const replyForm = replyOpen
+    ? `
+      <div class="comment-reply-form">
+        <textarea class="thread-textarea" data-thread-reply-input="${c.id}" rows="2"
+          placeholder="답글 작성…">${escapeHtml(replyDraft)}</textarea>
+        <div class="thread-form-actions">
+          <button class="btn btn-thread btn-sm" data-thread-reply-submit="${c.id}" data-qid="${qid}">답글 등록</button>
+          <button class="btn btn-thread-cancel btn-sm" data-thread-reply-cancel="${c.id}">취소</button>
+        </div>
+      </div>
+    `
+    : '';
+
+  const statusBar = `
+    <div class="comment-status-bar">
+      <span class="comment-status" style="background:${status.bg};color:${status.color}">${status.icon} ${status.label}</span>
+      <select class="status-select" data-thread-status="${c.id}" data-qid="${qid}">${statusOptions}</select>
+      ${statusChangedNote}
+    </div>
+  `;
+
+  const childrenHtml = (c.children || [])
+    .map(cc => renderCommentNodeAdmin(qid, cc, depth + 1))
+    .join('');
+
+  return `
+    <div class="comment-node depth-${Math.min(depth, 3)}" data-cid="${c.id}">
+      <div class="comment-card">
+        <div class="comment-meta">
+          <span class="comment-author">${escapeHtml(c.author_name || '익명')}</span>
+          ${roleBadge}
+          <span class="comment-org">${orgPart}</span>
+          <span class="comment-time">· ${fmtRel(c.created_at)}</span>
+        </div>
+        ${textHtml}
+        ${statusBar}
+        <div class="comment-actions">${actions.join(' · ')}</div>
+      </div>
+      ${replyForm}
+      ${childrenHtml ? `<div class="comment-children">${childrenHtml}</div>` : ''}
+    </div>
+  `;
+}
+
+async function adminPostComment(qid, text, parentId) {
+  const body = parentId ? { text, parent_id: parentId } : { text };
+  const res = await api(`/api/admin/threads/${qid}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!THREADS_CACHE[qid]) THREADS_CACHE[qid] = [];
+  THREADS_CACHE[qid].push(res.comment);
+  return res.comment;
+}
+
+async function adminUpdateComment(qid, cid, payload) {
+  const res = await api(`/api/admin/threads/${qid}/${cid}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  const list = THREADS_CACHE[qid] || [];
+  const idx = list.findIndex(c => c.id === cid);
+  if (idx >= 0) list[idx] = res.comment;
+  return res.comment;
+}
+
+async function adminDeleteComment(qid, cid) {
+  const res = await api(`/api/admin/threads/${qid}/${cid}`, { method: 'DELETE' });
+  if (res.status === 'deleted') {
+    THREADS_CACHE[qid] = (THREADS_CACHE[qid] || []).filter(c => c.id !== cid);
+  } else {
+    const list = THREADS_CACHE[qid] || [];
+    const idx = list.findIndex(c => c.id === cid);
+    if (idx >= 0) list[idx] = { ...list[idx], text: '(관리자가 삭제한 코멘트)' };
+  }
+}
+
+function bindThreadEventsAdmin(rootEl) {
+  rootEl.querySelectorAll('[data-thread-new]').forEach(el => {
+    const qid = el.dataset.threadNew;
+    el.addEventListener('input', () => { THREAD_DRAFTS[qid] = el.value; });
+  });
+  rootEl.querySelectorAll('[data-thread-submit]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const qid = btn.dataset.threadSubmit;
+      const text = (THREAD_DRAFTS[qid] || '').trim();
+      if (!text) return toast('내용을 입력해 주세요', 'error');
+      try {
+        await adminPostComment(qid, text);
+        THREAD_DRAFTS[qid] = '';
+        refreshThreadAdmin(qid);
+      } catch (e) { toast('등록 실패: ' + e.message, 'error'); }
+    });
+  });
+
+  rootEl.querySelectorAll('[data-thread-reply]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      THREAD_OPEN_REPLY = btn.dataset.threadReply;
+      refreshThreadAdmin(btn.dataset.qid);
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-reply-input]').forEach(el => {
+    const pid = el.dataset.threadReplyInput;
+    el.addEventListener('input', () => { THREAD_REPLY_DRAFTS[pid] = el.value; });
+  });
+  rootEl.querySelectorAll('[data-thread-reply-submit]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.threadReplySubmit;
+      const qid = btn.dataset.qid;
+      const text = (THREAD_REPLY_DRAFTS[pid] || '').trim();
+      if (!text) return toast('내용을 입력해 주세요', 'error');
+      try {
+        await adminPostComment(qid, text, pid);
+        delete THREAD_REPLY_DRAFTS[pid];
+        THREAD_OPEN_REPLY = null;
+        refreshThreadAdmin(qid);
+      } catch (e) { toast('등록 실패: ' + e.message, 'error'); }
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-reply-cancel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pid = btn.dataset.threadReplyCancel;
+      delete THREAD_REPLY_DRAFTS[pid];
+      THREAD_OPEN_REPLY = null;
+      const wrap = btn.closest('.reviewer-thread');
+      if (wrap) refreshThreadAdmin(wrap.dataset.qid);
+    });
+  });
+
+  rootEl.querySelectorAll('[data-thread-edit-open]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cid = btn.dataset.threadEditOpen;
+      THREAD_OPEN_EDIT = cid;
+      const wrap = btn.closest('.reviewer-thread');
+      const qid = wrap?.dataset.qid;
+      const list = THREADS_CACHE[qid] || [];
+      const c = list.find(x => x.id === cid);
+      if (c) THREAD_EDIT_DRAFTS[cid] = c.text;
+      if (qid) refreshThreadAdmin(qid);
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-edit]').forEach(el => {
+    const cid = el.dataset.threadEdit;
+    el.addEventListener('input', () => { THREAD_EDIT_DRAFTS[cid] = el.value; });
+  });
+  rootEl.querySelectorAll('[data-thread-edit-save]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const cid = btn.dataset.threadEditSave;
+      const qid = btn.dataset.qid;
+      const text = (THREAD_EDIT_DRAFTS[cid] || '').trim();
+      if (!text) return toast('내용을 입력해 주세요', 'error');
+      try {
+        await adminUpdateComment(qid, cid, { text });
+        delete THREAD_EDIT_DRAFTS[cid];
+        THREAD_OPEN_EDIT = null;
+        refreshThreadAdmin(qid);
+      } catch (e) { toast('수정 실패: ' + e.message, 'error'); }
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-edit-cancel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cid = btn.dataset.threadEditCancel;
+      delete THREAD_EDIT_DRAFTS[cid];
+      THREAD_OPEN_EDIT = null;
+      const wrap = btn.closest('.reviewer-thread');
+      if (wrap) refreshThreadAdmin(wrap.dataset.qid);
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-delete]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('이 코멘트를 삭제하시겠습니까?')) return;
+      const cid = btn.dataset.threadDelete;
+      const qid = btn.dataset.qid;
+      try {
+        await adminDeleteComment(qid, cid);
+        refreshThreadAdmin(qid);
+      } catch (e) { toast('삭제 실패: ' + e.message, 'error'); }
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-status]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const cid = sel.dataset.threadStatus;
+      const qid = sel.dataset.qid;
+      const newStatus = sel.value;
+      try {
+        await adminUpdateComment(qid, cid, { status: newStatus });
+        refreshThreadAdmin(qid);
+        toast(`상태 → ${STATUS_META[newStatus]?.label}`);
+      } catch (e) { toast('상태 변경 실패: ' + e.message, 'error'); }
+    });
+  });
+  rootEl.querySelectorAll('[data-thread-refresh]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const qid = btn.dataset.threadRefresh;
+      await fetchThreads();
+      refreshThreadAdmin(qid);
+    });
+  });
+}
+
+function refreshThreadAdmin(qid) {
+  const wrap = document.querySelector(`#resp-modal .reviewer-thread[data-qid="${qid}"]`);
+  if (!wrap) return;
+  wrap.outerHTML = renderThreadAdmin(qid);
+  // outerHTML 교체 후 새 wrap을 찾아 그 안에서만 바인딩 (다른 thread에 중복 핸들러 방지)
+  const fresh = document.querySelector(`#resp-modal .reviewer-thread[data-qid="${qid}"]`);
+  if (fresh) bindThreadEventsAdmin(fresh);
 }
 
 // ── Response Detail Modal ──
@@ -497,9 +830,10 @@ async function showResponseDetail(token) {
   const row = rCache.find(r => r.token === token);
   if (!row) { toast('응답을 찾을 수 없습니다', 'error'); return; }
   const respMap = row.responses || {};
-  const comments = row.comments || {};
   const sections = window.SURVEY_SECTIONS;
   const QT = window.Q_TYPE || {};
+
+  await fetchThreads();
 
   const meta = `
     <div class="resp-meta">
@@ -510,9 +844,16 @@ async function showResponseDetail(token) {
         <dt>토큰</dt><dd><code style="font-size:11px">${escapeHtml(token)}</code></dd>
         <dt>제출</dt><dd style="font-size:12px">${row.submitted_at ? new Date(row.submitted_at).toLocaleString('ko') : '-'}</dd>
         ${row.updated_at ? `<dt>수정</dt><dd style="font-size:12px">${new Date(row.updated_at).toLocaleString('ko')}</dd>` : ''}
+        <dt>이 응답자 코멘트</dt><dd>${row.comment_count || 0}건</dd>
       </dl>
     </div>
   `;
+
+  function threadBlockIfAny(qid) {
+    const cnt = (THREADS_CACHE[qid] || []).length;
+    if (cnt === 0) return '';
+    return renderThreadAdmin(qid);
+  }
 
   let body;
   if (!sections) {
@@ -528,15 +869,14 @@ async function showResponseDetail(token) {
           for (const sq of q.subQuestions) {
             const v = respMap[sq.id];
             items.push(`<div class="resp-sub"><span class="resp-sub-label">${escapeHtml(sq.label)}</span> ${formatAnswer(sq, v, respMap)}</div>`);
+            items.push(threadBlockIfAny(sq.id));
           }
-          const c = comments[q.id];
-          if (c) items.push(`<div class="resp-comment">💬 ${escapeHtml(c).replace(/\n/g, '<br>')}</div>`);
+          items.push(threadBlockIfAny(q.id));
           items.push(`</div>`);
         } else {
           const v = respMap[q.id];
           items.push(`<div class="resp-q"><div class="resp-q-id">${q.id}</div><div class="resp-q-text">${escapeHtml(q.text)}</div><div class="resp-a">${formatAnswer(q, v, respMap)}</div>`);
-          const c = comments[q.id];
-          if (c) items.push(`<div class="resp-comment">💬 ${escapeHtml(c).replace(/\n/g, '<br>')}</div>`);
+          items.push(threadBlockIfAny(q.id));
           items.push(`</div>`);
         }
       }
@@ -547,12 +887,12 @@ async function showResponseDetail(token) {
   document.getElementById('resp-modal-title').textContent = `응답 상세 — ${row.name || ''} (${row.org || ''})`;
   document.getElementById('resp-modal-body').innerHTML = meta + body;
   document.getElementById('resp-modal').style.display = 'flex';
+  bindThreadEventsAdmin(document.getElementById('resp-modal-body'));
 }
 
 function closeRespModal(e) {
   if (e && e.target !== e.currentTarget) return;
   document.getElementById('resp-modal').style.display = 'none';
-}
 }
 
 async function downloadCSV() {

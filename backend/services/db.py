@@ -27,6 +27,10 @@ async def connect():
     await _db.email_logs.create_index([("sent_at", -1)])
     await _db.email_logs.create_index("batch_id")
     await _db.email_logs.create_index("status")
+    await _db.review_comments.create_index("id", unique=True)
+    await _db.review_comments.create_index([("survey_version", 1), ("qid", 1), ("created_at", 1)])
+    await _db.review_comments.create_index("author_token")
+    await _db.review_comments.create_index("parent_id")
 
 
 async def disconnect():

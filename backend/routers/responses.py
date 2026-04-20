@@ -1,9 +1,38 @@
 from fastapi import APIRouter, Request, HTTPException
 from datetime import datetime
-from models import ResponseSubmit, ResponseRecord, ParticipantUpdate
+from uuid import uuid4
+from models import (
+    ResponseSubmit,
+    ResponseRecord,
+    ParticipantUpdate,
+    CommentCreateRequest,
+    CommentUpdateRequest,
+    COMMENT_STATUSES,
+)
 from services.db import get_db
 
 router = APIRouter(prefix="/api", tags=["responses"])
+
+
+async def _require_reviewer(token: str) -> dict:
+    """token이 유효한 연구진 참가자인지 확인하고 participant doc 반환."""
+    db = get_db()
+    p = await db.participants.find_one({"token": token}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "유효하지 않은 토큰입니다.")
+    if p.get("category") != "연구진":
+        raise HTTPException(403, "연구진 전용 기능입니다.")
+    return p
+
+
+def _serialize_comment(doc: dict) -> dict:
+    """ObjectId 제거 + datetime ISO 변환."""
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    for k in ("created_at", "updated_at", "status_changed_at"):
+        v = out.get(k)
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+    return out
 
 
 @router.get("/survey/{token}")
@@ -75,6 +104,122 @@ async def save_reviewer_comments(token: str, body: dict, request: Request):
         upsert=True,
     )
     return {"status": "ok", "comments_count": len(comments), "updated_at": now.isoformat()}
+
+
+# ── Review Comment Threads (연구진 + 관리자 공유) ──
+
+@router.get("/survey/{token}/threads")
+async def list_threads(token: str, survey_version: str = "v1"):
+    """연구진 토큰으로 모든 코멘트 스레드를 조회한다.
+    qid별로 그룹화하여 반환. 모든 작성자(다른 연구진 + 관리자)의 코멘트를 포함.
+    """
+    await _require_reviewer(token)
+    db = get_db()
+    cursor = db.review_comments.find(
+        {"survey_version": survey_version},
+        {"_id": 0},
+    ).sort("created_at", 1)
+
+    by_qid: dict[str, list[dict]] = {}
+    async for doc in cursor:
+        out = _serialize_comment(doc)
+        by_qid.setdefault(out["qid"], []).append(out)
+    return {"survey_version": survey_version, "threads": by_qid}
+
+
+@router.post("/survey/{token}/threads/{qid}")
+async def create_comment(
+    token: str,
+    qid: str,
+    body: CommentCreateRequest,
+    survey_version: str = "v1",
+):
+    """연구진이 새 코멘트(또는 답글)를 작성한다."""
+    p = await _require_reviewer(token)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "내용을 입력해 주십시오.")
+
+    db = get_db()
+    if body.parent_id:
+        parent = await db.review_comments.find_one({"id": body.parent_id})
+        if not parent:
+            raise HTTPException(404, "원본 코멘트를 찾을 수 없습니다.")
+
+    now = datetime.utcnow()
+    doc = {
+        "id": uuid4().hex,
+        "survey_version": survey_version,
+        "qid": qid,
+        "author_role": "reviewer",
+        "author_token": token,
+        "author_name": p.get("name", ""),
+        "author_email": p.get("email", ""),
+        "author_org": p.get("org", ""),
+        "text": text,
+        "status": "open",
+        "parent_id": body.parent_id,
+        "created_at": now,
+        "updated_at": None,
+        "status_changed_at": None,
+        "status_changed_by": "",
+    }
+    await db.review_comments.insert_one(doc)
+    return {"status": "created", "comment": _serialize_comment(doc)}
+
+
+@router.patch("/survey/{token}/threads/{qid}/{comment_id}")
+async def update_own_comment(
+    token: str,
+    qid: str,
+    comment_id: str,
+    body: CommentUpdateRequest,
+):
+    """본인이 작성한 코멘트의 본문만 수정 가능. 상태 변경은 관리자 전용."""
+    await _require_reviewer(token)
+    if body.status is not None:
+        raise HTTPException(403, "상태 변경은 관리자만 가능합니다.")
+    text = (body.text or "").strip() if body.text is not None else None
+    if not text:
+        raise HTTPException(400, "내용을 입력해 주십시오.")
+
+    db = get_db()
+    target = await db.review_comments.find_one({"id": comment_id, "qid": qid})
+    if not target:
+        raise HTTPException(404, "코멘트를 찾을 수 없습니다.")
+    if target.get("author_token") != token:
+        raise HTTPException(403, "본인이 작성한 코멘트만 수정할 수 있습니다.")
+
+    now = datetime.utcnow()
+    await db.review_comments.update_one(
+        {"id": comment_id},
+        {"$set": {"text": text, "updated_at": now}},
+    )
+    updated = await db.review_comments.find_one({"id": comment_id}, {"_id": 0})
+    return {"status": "updated", "comment": _serialize_comment(updated)}
+
+
+@router.delete("/survey/{token}/threads/{qid}/{comment_id}")
+async def delete_own_comment(token: str, qid: str, comment_id: str):
+    """본인이 작성한 코멘트 삭제. 답글이 달린 경우에도 본문은 비우지만 entry는 유지."""
+    await _require_reviewer(token)
+    db = get_db()
+    target = await db.review_comments.find_one({"id": comment_id, "qid": qid})
+    if not target:
+        raise HTTPException(404, "코멘트를 찾을 수 없습니다.")
+    if target.get("author_token") != token:
+        raise HTTPException(403, "본인이 작성한 코멘트만 삭제할 수 있습니다.")
+
+    has_replies = await db.review_comments.count_documents({"parent_id": comment_id}) > 0
+    if has_replies:
+        await db.review_comments.update_one(
+            {"id": comment_id},
+            {"$set": {"text": "(작성자가 삭제한 코멘트)", "updated_at": datetime.utcnow()}},
+        )
+        return {"status": "soft_deleted"}
+
+    await db.review_comments.delete_one({"id": comment_id})
+    return {"status": "deleted"}
 
 
 @router.patch("/survey/{token}/participant")
