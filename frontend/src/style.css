@@ -510,6 +510,159 @@ body {
   line-height: 1.5;
 }
 
+.sub-text-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sub-text-row .text-input.sub-text {
+  flex: 1;
+  min-width: 180px;
+}
+
+.sub-text-row .text-input.sub-text:disabled {
+  background: var(--c-surface-2, #f3f4f6);
+  color: var(--c-text-tertiary);
+  cursor: not-allowed;
+}
+
+.unknown-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--c-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.unknown-check input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* ── Number Table (Q19 예산표 등) ── */
+.number-table-wrap {
+  margin-top: 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius, 8px);
+  padding: 16px;
+  background: var(--c-surface);
+  overflow-x: auto;
+}
+.number-table-unit {
+  text-align: right;
+  font-size: 12px;
+  color: var(--c-text-tertiary);
+  margin-bottom: 8px;
+}
+.number-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.number-table th,
+.number-table td {
+  border: 1px solid var(--c-border);
+  padding: 6px 10px;
+  text-align: center;
+  vertical-align: middle;
+}
+.number-table thead th {
+  background: #f8fafc;
+  font-weight: 600;
+  font-size: 12px;
+}
+.number-table .row-label {
+  font-weight: 600;
+  background: #fafbfc;
+  white-space: nowrap;
+}
+.number-table .cell-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: right;
+  outline: none;
+  font-family: inherit;
+  border-radius: 4px;
+}
+.number-table .cell-input:focus {
+  border-color: var(--c-accent);
+  background: var(--c-surface);
+}
+.number-table .cell-input:disabled {
+  color: var(--c-text-tertiary);
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+.number-table .cell-sum {
+  text-align: right;
+  font-weight: 600;
+  background: #f0f9ff;
+  color: #0369a1;
+  min-width: 80px;
+}
+.number-table .cell-unknown {
+  background: #fafbfc;
+}
+.number-table .cell-unknown input[type="checkbox"] {
+  cursor: pointer;
+}
+.number-table-wrap.has-error {
+  border-color: var(--c-error, #dc2626);
+}
+
+/* ── Reviewer (연구진) Comment ── */
+.reviewer-comment {
+  margin: 12px 0 24px;
+  padding: 12px 14px;
+  background: #fef7e0;
+  border: 1px dashed #f59e0b;
+  border-radius: var(--radius-sm, 6px);
+}
+.reviewer-comment-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+  margin-bottom: 6px;
+}
+.reviewer-comment-sub {
+  font-weight: 400;
+  color: #92400e;
+  margin-left: 6px;
+}
+.reviewer-comment-input {
+  width: 100%;
+  border: 1px solid #f59e0b33;
+  background: #fff;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+.reviewer-comment-input:focus {
+  border-color: #f59e0b;
+}
+
+/* ── Reviewer Skip Button ── */
+.btn-skip {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px dashed #fdba74;
+  margin: 0 8px;
+}
+.btn-skip:hover {
+  background: #fed7aa;
+}
+
 /* ── Sub Questions ── */
 .sub-question-group {
   display: flex;

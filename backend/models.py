@@ -43,12 +43,14 @@ class ResponseSubmit(BaseModel):
     token: str
     survey_version: str = "v1"
     responses: dict[str, Any]
+    comments: Optional[dict[str, str]] = None  # reviewer (연구진) only
 
 
 class ResponseRecord(BaseModel):
     token: str
     survey_version: str
     responses: dict[str, Any]
+    comments: dict[str, str] = Field(default_factory=dict)
     submitted_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
     ip: str = ""

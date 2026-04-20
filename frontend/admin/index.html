@@ -52,6 +52,7 @@
             <option value="">전체 구분</option>
             <option value="광역자치단체">광역자치단체</option>
             <option value="기초자치단체">기초자치단체</option>
+            <option value="연구진">연구진</option>
             <option value="미분류">미분류</option>
           </select>
           <select id="p-send-status">
@@ -105,6 +106,17 @@
   </div>
 </div>
 
+<!-- Response Detail Modal -->
+<div id="resp-modal" class="modal-backdrop" style="display:none" onclick="closeRespModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()" style="width:1000px;max-width:96vw">
+    <div class="modal-header">
+      <span id="resp-modal-title">응답 상세</span>
+      <button class="modal-close" onclick="closeRespModal()" aria-label="닫기">&times;</button>
+    </div>
+    <div class="modal-body" id="resp-modal-body" style="max-height:80vh;overflow:auto"></div>
+  </div>
+</div>
+
 <!-- Email Log Modal -->
 <div id="log-modal" class="modal-backdrop" style="display:none" onclick="closeLogModal(event)">
   <div class="modal-box" onclick="event.stopPropagation()" style="width:900px;max-width:95vw">
@@ -116,6 +128,16 @@
   </div>
 </div>
 
+<script type="module">
+  // 빌드 산출물에 questions.js가 복사되어 있으면 스키마를 window에 노출. 없어도 admin 기본 기능은 동작.
+  try {
+    const mod = await import('./questions.js');
+    window.SURVEY_SECTIONS = mod.sections;
+    window.Q_TYPE = mod.Q_TYPE;
+  } catch (e) {
+    console.warn('questions.js not loaded — 응답 상세 조회에서 문항 텍스트가 표시되지 않습니다.', e);
+  }
+</script>
 <script src="admin.js"></script>
 </body>
 </html>

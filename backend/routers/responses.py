@@ -29,6 +29,7 @@ async def verify_token(token: str):
         "duty": participant.get("duty", ""),
         "has_responded": existing is not None,
         "responses": existing.get("responses") if existing else None,
+        "comments": existing.get("comments") if existing else None,
         "submitted_at": existing.get("submitted_at").isoformat() if existing and existing.get("submitted_at") else None,
         "updated_at": existing.get("updated_at").isoformat() if existing and existing.get("updated_at") else None,
     }
@@ -103,17 +104,22 @@ async def submit_response(body: ResponseSubmit, request: Request):
     ip = request.client.host if request.client else ""
     ua = request.headers.get("user-agent", "")
 
+    comments = body.comments or {}
+
     existing = await db.responses.find_one({"token": body.token})
     if existing:
+        update_fields = {
+            "responses": body.responses,
+            "survey_version": body.survey_version,
+            "updated_at": now,
+            "ip": ip,
+            "user_agent": ua,
+        }
+        if body.comments is not None:
+            update_fields["comments"] = comments
         await db.responses.update_one(
             {"token": body.token},
-            {"$set": {
-                "responses": body.responses,
-                "survey_version": body.survey_version,
-                "updated_at": now,
-                "ip": ip,
-                "user_agent": ua,
-            }},
+            {"$set": update_fields},
         )
         return {"status": "updated", "token": body.token}
 
@@ -121,6 +127,7 @@ async def submit_response(body: ResponseSubmit, request: Request):
         token=body.token,
         survey_version=body.survey_version,
         responses=body.responses,
+        comments=comments,
         submitted_at=now,
         ip=ip,
         user_agent=ua,

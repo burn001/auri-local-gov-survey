@@ -82,7 +82,7 @@ function toast(msg, type = 'success') {
 }
 
 // ── Dashboard ──
-const CAT_COLORS = { '광역자치단체': '#3b82f6', '기초자치단체': '#22c55e', '미분류': '#d1d5db' };
+const CAT_COLORS = { '광역자치단체': '#3b82f6', '기초자치단체': '#22c55e', '연구진': '#f59e0b', '미분류': '#d1d5db' };
 
 async function loadDashboard() {
   const data = await api('/api/admin/stats');
@@ -94,7 +94,7 @@ async function loadDashboard() {
     <div class="stat-card"><div class="label">응답률</div><div class="value">${data.total_participants ? (data.total_responses / data.total_participants * 100).toFixed(1) : 0}%</div></div>
   `;
 
-  const order = ['광역자치단체', '기초자치단체', '미분류'];
+  const order = ['광역자치단체', '기초자치단체', '연구진', '미분류'];
   document.getElementById('cat-bars').innerHTML = '<h3 style="font-size:14px;font-weight:600;margin-bottom:12px">유형별 응답 현황</h3>' +
     order.filter(c => cats[c]).map(c => {
       const d = cats[c];
@@ -402,21 +402,157 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Responses ──
+let rCache = [];
 async function loadResponses() {
   const cat = document.getElementById('r-category').value;
   const q = `?skip=0&limit=200` + (cat ? `&category=${cat}` : '');
   const data = await api('/api/admin/responses' + q);
+  rCache = data.data;
 
   document.getElementById('r-table').innerHTML = `<table>
-    <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>제출일시</th><th>수정일시</th></tr></thead>
-    <tbody>${data.data.map(r => `<tr>
-      <td>${r.name || ''}</td>
-      <td>${r.org || ''}</td>
-      <td><span class="badge badge-blue">${r.category || ''}</span></td>
-      <td style="font-size:12px">${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ko') : ''}</td>
-      <td style="font-size:12px">${r.updated_at ? new Date(r.updated_at).toLocaleString('ko') : '-'}</td>
-    </tr>`).join('')}</tbody>
+    <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>제출일시</th><th>수정일시</th><th>상세</th></tr></thead>
+    <tbody>${data.data.map(r => {
+      const hasComments = r.comments && Object.values(r.comments).some(v => (v || '').trim());
+      const commentBadge = hasComments ? '<span class="badge badge-orange" style="margin-left:4px">💬 의견</span>' : '';
+      return `<tr>
+        <td>${r.name || ''}</td>
+        <td>${r.org || ''}</td>
+        <td><span class="badge badge-blue">${r.category || ''}</span></td>
+        <td style="font-size:12px">${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ko') : ''}</td>
+        <td style="font-size:12px">${r.updated_at ? new Date(r.updated_at).toLocaleString('ko') : '-'}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="showResponseDetail('${r.token}')">열기</button>${commentBadge}</td>
+      </tr>`;
+    }).join('')}</tbody>
   </table>`;
+}
+
+// ── Response Detail Modal ──
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatAnswer(q, val, allResp) {
+  if (val === undefined || val === null || val === '') {
+    return '<span style="color:var(--text3)">(무응답)</span>';
+  }
+  const QT = window.Q_TYPE || {};
+  if (q.type === QT.SINGLE || q.type === QT.SINGLE_WITH_OTHER) {
+    if (val === 'other') {
+      const other = allResp[q.id + '_other'] || '';
+      return `<span class="badge badge-blue">기타</span> <span>${escapeHtml(other)}</span>`;
+    }
+    const idx = typeof val === 'number' ? val : parseInt(val, 10);
+    const opt = q.options?.[idx];
+    return opt ? `<span>${escapeHtml(opt)}</span> <code style="color:var(--text3);font-size:11px">(${idx})</code>` : `<code>${escapeHtml(String(val))}</code>`;
+  }
+  if ([QT.MULTI, QT.MULTI_WITH_OTHER, QT.MULTI_LIMIT, QT.MULTI_LIMIT_OTHER].includes(q.type)) {
+    if (!Array.isArray(val)) return `<code>${escapeHtml(JSON.stringify(val))}</code>`;
+    const parts = val.map(v => {
+      if (v === 'other') {
+        const other = allResp[q.id + '_other'] || '';
+        return `<span class="chip chip-other">기타: ${escapeHtml(other)}</span>`;
+      }
+      const idx = typeof v === 'number' ? v : parseInt(v, 10);
+      const opt = q.options?.[idx];
+      return `<span class="chip">${escapeHtml(opt || String(v))}</span>`;
+    });
+    return parts.join(' ');
+  }
+  if (q.type === QT.NUMBER_TABLE) {
+    if (typeof val !== 'object') return `<code>${escapeHtml(JSON.stringify(val))}</code>`;
+    const fmt = (n) => new Intl.NumberFormat('ko').format(Number(n) || 0);
+    const rows = q.rows.map(r => {
+      const rv = val[r.id];
+      if (rv === 'unknown') {
+        return `<tr><td>${escapeHtml(r.label)}</td><td colspan="${q.columns.length + 1}" style="color:var(--text3);font-style:italic">모름/해당없음</td></tr>`;
+      }
+      if (!rv || typeof rv !== 'object') {
+        return `<tr><td>${escapeHtml(r.label)}</td><td colspan="${q.columns.length + 1}" style="color:var(--text3)">(무응답)</td></tr>`;
+      }
+      const cells = q.columns.map(c => `<td style="text-align:right">${fmt(rv[c.id])}</td>`).join('');
+      const sum = q.columns.reduce((a, c) => a + (Number(rv[c.id]) || 0), 0);
+      return `<tr><td>${escapeHtml(r.label)}</td>${cells}<td style="text-align:right;font-weight:600">${fmt(sum)}</td></tr>`;
+    }).join('');
+    const header = `<tr><th>연도</th>${q.columns.map(c => `<th>${escapeHtml(c.label)}</th>`).join('')}<th>합계</th></tr>`;
+    return `<table class="inline-number"><thead>${header}</thead><tbody>${rows}</tbody></table>` +
+      (q.unit ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">단위: ${escapeHtml(q.unit)}</div>` : '');
+  }
+  if (q.type === QT.LIKERT_TABLE) {
+    if (typeof val !== 'object') return `<code>${escapeHtml(JSON.stringify(val))}</code>`;
+    const rows = q.items.map((item, i) => {
+      const v = val[i];
+      const label = v ? (q.scaleLabels?.[v - 1] || v) : '(무응답)';
+      return `<tr><td style="font-size:12px">${escapeHtml(item)}</td><td><strong>${escapeHtml(String(label))}</strong></td></tr>`;
+    });
+    return `<table class="inline-likert"><tbody>${rows.join('')}</tbody></table>`;
+  }
+  if (q.type === QT.TEXT) {
+    return `<div class="response-text">${escapeHtml(String(val)).replace(/\n/g, '<br>')}</div>`;
+  }
+  return `<code>${escapeHtml(JSON.stringify(val))}</code>`;
+}
+
+async function showResponseDetail(token) {
+  const row = rCache.find(r => r.token === token);
+  if (!row) { toast('응답을 찾을 수 없습니다', 'error'); return; }
+  const respMap = row.responses || {};
+  const comments = row.comments || {};
+  const sections = window.SURVEY_SECTIONS;
+  const QT = window.Q_TYPE || {};
+
+  const meta = `
+    <div class="resp-meta">
+      <dl>
+        <dt>응답자</dt><dd>${escapeHtml(row.name || '-')}</dd>
+        <dt>소속</dt><dd>${escapeHtml(row.org || '-')}</dd>
+        <dt>구분</dt><dd><span class="badge badge-blue">${escapeHtml(row.category || '-')}</span></dd>
+        <dt>토큰</dt><dd><code style="font-size:11px">${escapeHtml(token)}</code></dd>
+        <dt>제출</dt><dd style="font-size:12px">${row.submitted_at ? new Date(row.submitted_at).toLocaleString('ko') : '-'}</dd>
+        ${row.updated_at ? `<dt>수정</dt><dd style="font-size:12px">${new Date(row.updated_at).toLocaleString('ko')}</dd>` : ''}
+      </dl>
+    </div>
+  `;
+
+  let body;
+  if (!sections) {
+    body = `<p style="color:#c00;font-size:12px;margin-bottom:8px">(questions.js 스키마 미로드 — raw JSON으로 표시합니다)</p>
+            <pre style="white-space:pre-wrap;font-size:11px;background:#f9fafb;padding:12px;border-radius:6px">${escapeHtml(JSON.stringify(respMap, null, 2))}</pre>`;
+  } else {
+    const items = [];
+    for (const s of sections) {
+      items.push(`<h3 class="resp-section">${escapeHtml(s.title)}</h3>`);
+      for (const q of s.questions) {
+        if (q.type === QT.SUB_QUESTIONS) {
+          items.push(`<div class="resp-q"><div class="resp-q-id">${q.id}</div><div class="resp-q-text">${escapeHtml(q.text)}</div>`);
+          for (const sq of q.subQuestions) {
+            const v = respMap[sq.id];
+            items.push(`<div class="resp-sub"><span class="resp-sub-label">${escapeHtml(sq.label)}</span> ${formatAnswer(sq, v, respMap)}</div>`);
+          }
+          const c = comments[q.id];
+          if (c) items.push(`<div class="resp-comment">💬 ${escapeHtml(c).replace(/\n/g, '<br>')}</div>`);
+          items.push(`</div>`);
+        } else {
+          const v = respMap[q.id];
+          items.push(`<div class="resp-q"><div class="resp-q-id">${q.id}</div><div class="resp-q-text">${escapeHtml(q.text)}</div><div class="resp-a">${formatAnswer(q, v, respMap)}</div>`);
+          const c = comments[q.id];
+          if (c) items.push(`<div class="resp-comment">💬 ${escapeHtml(c).replace(/\n/g, '<br>')}</div>`);
+          items.push(`</div>`);
+        }
+      }
+    }
+    body = items.join('');
+  }
+
+  document.getElementById('resp-modal-title').textContent = `응답 상세 — ${row.name || ''} (${row.org || ''})`;
+  document.getElementById('resp-modal-body').innerHTML = meta + body;
+  document.getElementById('resp-modal').style.display = 'flex';
+}
+
+function closeRespModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('resp-modal').style.display = 'none';
+}
 }
 
 async function downloadCSV() {

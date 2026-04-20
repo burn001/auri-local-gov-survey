@@ -2,6 +2,7 @@ import { sections, Q_TYPE, SURVEY_META } from './questions.js';
 
 const STORAGE_KEY = 'auri_survey_responses';
 const STORAGE_PAGE_KEY = 'auri_survey_page';
+const STORAGE_COMMENTS_KEY = 'auri_survey_comments';
 const API_BASE = import.meta.env.VITE_API_BASE || (
   location.hostname === 'localhost' ? '' : 'https://alris.ddns.net:8443/lg'
 );
@@ -30,6 +31,7 @@ export class SurveyEngine {
     this.editMode = EDIT_MODE.NEW;
     this.gate = this.token ? GATE.LOADING : GATE.DENIED;
     this.responses = this.loadResponses();
+    this.comments = this.loadComments();
     this.currentPage = 0;
     this.visibleSections = [];
     this.editingParticipant = false;
@@ -56,6 +58,10 @@ export class SurveyEngine {
       if (data.has_responded && data.responses) {
         this.responses = { ...this.responses, ...data.responses };
         this.saveResponses();
+        if (data.comments) {
+          this.comments = { ...this.comments, ...data.comments };
+          this.saveComments();
+        }
         this.submitted = true;
         this.gate = GATE.RESUBMIT_CHOICE;
       } else {
@@ -77,6 +83,31 @@ export class SurveyEngine {
   saveResponses() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.responses));
     localStorage.setItem(STORAGE_PAGE_KEY, String(this.currentPage));
+  }
+
+  loadComments() {
+    try {
+      const saved = localStorage.getItem(STORAGE_COMMENTS_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  }
+
+  saveComments() {
+    localStorage.setItem(STORAGE_COMMENTS_KEY, JSON.stringify(this.comments));
+  }
+
+  isReviewer() {
+    return this.participant && this.participant.category === '연구진';
+  }
+
+  renderReviewerComment(qid) {
+    const val = (this.comments && this.comments[qid]) || '';
+    return `
+      <div class="reviewer-comment" data-qid="${qid}">
+        <div class="reviewer-comment-header">💬 연구진 수정 요청 메모 <span class="reviewer-comment-sub">(응답자에게 보이지 않음)</span></div>
+        <textarea class="reviewer-comment-input" data-cqid="${qid}" rows="2" placeholder="이 문항에 대한 수정 요청 / 표현 개선 / 오탈자 등을 입력하세요.">${this.escape(val)}</textarea>
+      </div>
+    `;
   }
 
   getResponse(id) { return this.responses[id]; }
@@ -477,12 +508,23 @@ export class SurveyEngine {
 
     for (const q of section.questions) {
       html += this.renderQuestion(q);
+      if (this.isReviewer()) {
+        html += this.renderReviewerComment(q.id);
+      }
     }
 
     html += `</div></div>`;
+    const reviewerSkipBtn = this.isReviewer() && !isLast
+      ? '<button class="btn btn-skip" id="btn-skip" title="연구진 전용 — 필수 응답 검증 없이 다음으로">⏭ 건너뛰기 (검토용)</button>'
+      : '';
+    const reviewerForceSubmit = this.isReviewer() && isLast
+      ? '<button class="btn btn-skip" id="btn-force-submit" title="연구진 전용 — 필수 응답 검증 없이 제출">⏭ 강제 제출 (검토용)</button>'
+      : '';
+
     html += `
       <div class="nav-bar"><div class="nav-inner">
         <button class="btn btn-prev" id="btn-prev">&larr; 이전</button>
+        ${reviewerSkipBtn}${reviewerForceSubmit}
         ${isLast
           ? `<button class="btn btn-submit" id="btn-next">${submitLabel}</button>`
           : '<button class="btn btn-next" id="btn-next">다음 &rarr;</button>'
@@ -518,6 +560,9 @@ export class SurveyEngine {
         break;
       case Q_TYPE.LIKERT_TABLE:
         inner = this.renderLikertTable(q);
+        break;
+      case Q_TYPE.NUMBER_TABLE:
+        inner = this.renderNumberTable(q);
         break;
       case Q_TYPE.TEXT:
         inner = this.renderTextInput(q);
@@ -578,6 +623,62 @@ export class SurveyEngine {
     return html;
   }
 
+  renderNumberTable(q) {
+    const unit = q.unit ? `<div class="number-table-unit">(단위: ${q.unit})</div>` : '';
+
+    // Header rows
+    let headTop = '<tr><th rowspan="2" class="th-row-label">연도</th>';
+    let headBottom = '<tr>';
+
+    if (q.columnGroups && q.columnGroups.length > 0) {
+      for (const g of q.columnGroups) {
+        if (g.colIds.length > 1) {
+          headTop += `<th colspan="${g.colIds.length}">${g.label}</th>`;
+          for (const cid of g.colIds) {
+            const c = q.columns.find(x => x.id === cid);
+            headBottom += `<th>${c?.label || cid}</th>`;
+          }
+        } else {
+          headTop += `<th rowspan="2">${g.label}</th>`;
+        }
+      }
+    } else {
+      for (const c of q.columns) {
+        headTop += `<th rowspan="2">${c.label}</th>`;
+      }
+    }
+
+    if (q.showRowSum) headTop += '<th rowspan="2" class="th-sum">합계</th>';
+    if (q.allowUnknownPerRow) headTop += '<th rowspan="2" class="th-unknown">모름/<br>해당없음</th>';
+    headTop += '</tr>';
+    headBottom += '</tr>';
+
+    // Body
+    let body = '';
+    for (const r of q.rows) {
+      body += `<tr data-row="${r.id}">`;
+      body += `<th class="row-label">${r.label}</th>`;
+      for (const c of q.columns) {
+        body += `<td><input type="number" class="cell-input" data-q="${q.id}" data-r="${r.id}" data-c="${c.id}" step="1" min="0" placeholder="0" /></td>`;
+      }
+      if (q.showRowSum) body += `<td class="cell-sum" data-r="${r.id}">0</td>`;
+      if (q.allowUnknownPerRow) {
+        body += `<td class="cell-unknown"><input type="checkbox" class="row-unknown-toggle" data-q="${q.id}" data-r="${r.id}" /></td>`;
+      }
+      body += '</tr>';
+    }
+
+    return `
+      <div class="number-table-wrap" data-qid="${q.id}">
+        ${unit}
+        <table class="number-table">
+          <thead>${headTop}${headBottom}</thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
   renderTextInput(q) {
     const isIdCode = q.id === 'ID_CODE';
     const cls = isIdCode ? 'text-input id-code-input' : 'text-input';
@@ -606,7 +707,16 @@ export class SurveyEngine {
       } else if (sq.type === Q_TYPE.MULTI) {
         inner = this.renderOptions(sq, 'checkbox');
       } else if (sq.type === Q_TYPE.TEXT) {
-        inner = `<input type="text" class="text-input sub-text" data-qid="${sq.id}" placeholder="${sq.placeholder || ''}" />`;
+        if (sq.allowUnknown) {
+          inner = `
+            <div class="sub-text-row">
+              <input type="text" class="text-input sub-text" data-qid="${sq.id}" placeholder="${sq.placeholder || ''}" />
+              <label class="unknown-check"><input type="checkbox" class="unknown-toggle" data-target="${sq.id}" /> <span>모름/해당없음</span></label>
+            </div>
+          `;
+        } else {
+          inner = `<input type="text" class="text-input sub-text" data-qid="${sq.id}" placeholder="${sq.placeholder || ''}" />`;
+        }
       }
       html += `
         <div class="sub-question" data-qid="${sq.id}">
@@ -637,6 +747,26 @@ export class SurveyEngine {
       }
     });
 
+    this.container.querySelector('#btn-skip')?.addEventListener('click', () => {
+      this.currentPage++;
+      this.updateVisibleSections();
+      this.render();
+    });
+
+    this.container.querySelector('#btn-force-submit')?.addEventListener('click', () => {
+      if (!confirm('검증 없이 현재 상태로 제출합니다. 계속할까요?')) return;
+      this.currentPage++;
+      this.render();
+    });
+
+    this.container.querySelectorAll('.reviewer-comment-input').forEach(el => {
+      el.addEventListener('input', () => {
+        const qid = el.dataset.cqid;
+        this.comments[qid] = el.value;
+        this.saveComments();
+      });
+    });
+
     this.container.querySelectorAll('.option-list').forEach(list => {
       const qid = list.dataset.qid;
       const type = list.dataset.type;
@@ -648,42 +778,44 @@ export class SurveyEngine {
           const input = item.querySelector('input[type="radio"], input[type="checkbox"]');
           if (!input || input.disabled) return;
 
-          if (type === 'radio') {
-            list.querySelectorAll('.option-item').forEach(oi => oi.classList.remove('selected'));
-            input.checked = true;
-            item.classList.add('selected');
-            this.setResponse(qid, parseInt(input.value) || input.value);
-          } else {
-            input.checked = !input.checked;
-            item.classList.toggle('selected', input.checked);
-            this.collectMultiResponse(qid, list, q);
-          }
-
-          if (q && q.exclusive !== undefined && input.checked) {
-            const idx = parseInt(item.dataset.index);
-            if (idx === q.exclusive) {
-              list.querySelectorAll('.option-item').forEach(oi => {
-                if (oi !== item) {
-                  const cb = oi.querySelector('input[type="checkbox"]');
-                  if (cb) { cb.checked = false; oi.classList.remove('selected'); }
-                }
-              });
+          // <label class="option-item"> 내부에 input이 있어 브라우저가 이미 toggle 처리함.
+          // 다음 프레임에서 최종 상태를 읽어 UI와 동기화 (수동 토글 금지).
+          requestAnimationFrame(() => {
+            if (type === 'radio') {
+              list.querySelectorAll('.option-item').forEach(oi => oi.classList.remove('selected'));
+              item.classList.add('selected');
+              this.setResponse(qid, parseInt(input.value) || input.value);
             } else {
-              const exItem = list.querySelector(`[data-index="${q.exclusive}"]`);
-              if (exItem) {
-                const cb = exItem.querySelector('input[type="checkbox"]');
-                if (cb) { cb.checked = false; exItem.classList.remove('selected'); }
-              }
+              item.classList.toggle('selected', input.checked);
+              this.collectMultiResponse(qid, list, q);
             }
-            this.collectMultiResponse(qid, list, q);
-          }
 
-          if (q && q.maxSelect) {
-            this.enforceMaxSelect(qid, list, q);
-          }
+            if (q && q.exclusive !== undefined && input.checked) {
+              const idx = parseInt(item.dataset.index);
+              if (idx === q.exclusive) {
+                list.querySelectorAll('.option-item').forEach(oi => {
+                  if (oi !== item) {
+                    const cb = oi.querySelector('input[type="checkbox"]');
+                    if (cb) { cb.checked = false; oi.classList.remove('selected'); }
+                  }
+                });
+              } else {
+                const exItem = list.querySelector(`[data-index="${q.exclusive}"]`);
+                if (exItem) {
+                  const cb = exItem.querySelector('input[type="checkbox"]');
+                  if (cb) { cb.checked = false; exItem.classList.remove('selected'); }
+                }
+              }
+              this.collectMultiResponse(qid, list, q);
+            }
 
-          const block = item.closest('.question-block, .sub-question');
-          if (block) block.classList.remove('has-error');
+            if (q && q.maxSelect) {
+              this.enforceMaxSelect(qid, list, q);
+            }
+
+            const block = item.closest('.question-block, .sub-question');
+            if (block) block.classList.remove('has-error');
+          });
         });
       });
     });
@@ -718,6 +850,70 @@ export class SurveyEngine {
       });
       el.addEventListener('click', (e) => e.stopPropagation());
     });
+
+    this.container.querySelectorAll('.cell-input').forEach(input => {
+      input.addEventListener('input', () => {
+        const qid = input.dataset.q;
+        const row = input.dataset.r;
+        const col = input.dataset.c;
+        let resp = this.getResponse(qid) || {};
+        if (!resp[row] || resp[row] === 'unknown') resp[row] = {};
+        const n = input.value === '' ? '' : Number(input.value);
+        resp[row][col] = n;
+        this.setResponse(qid, resp);
+        this.updateNumberTableSum(qid, row);
+        input.closest('.question-block')?.classList.remove('has-error');
+      });
+    });
+
+    this.container.querySelectorAll('.row-unknown-toggle').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const qid = cb.dataset.q;
+        const row = cb.dataset.r;
+        const tr = cb.closest('tr');
+        const inputs = tr.querySelectorAll('.cell-input');
+        let resp = this.getResponse(qid) || {};
+        if (cb.checked) {
+          inputs.forEach(inp => { inp.value = ''; inp.disabled = true; });
+          resp[row] = 'unknown';
+          const sumCell = this.container.querySelector(`.cell-sum[data-r="${row}"]`);
+          if (sumCell) sumCell.textContent = '모름';
+        } else {
+          inputs.forEach(inp => { inp.disabled = false; });
+          resp[row] = {};
+          this.updateNumberTableSum(qid, row);
+        }
+        this.setResponse(qid, resp);
+      });
+    });
+
+    this.container.querySelectorAll('.unknown-toggle').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const qid = cb.dataset.target;
+        const input = this.container.querySelector(`input.sub-text[data-qid="${qid}"]`);
+        if (!input) return;
+        if (cb.checked) {
+          input.value = '';
+          input.disabled = true;
+          this.setResponse(qid, '(모름/해당없음)');
+        } else {
+          input.disabled = false;
+          input.value = '';
+          this.setResponse(qid, '');
+          input.focus();
+        }
+        input.closest('.sub-question')?.classList.remove('has-error');
+      });
+    });
+  }
+
+  updateNumberTableSum(qid, row) {
+    const resp = this.getResponse(qid);
+    if (!resp || !resp[row] || resp[row] === 'unknown') return;
+    const cells = resp[row];
+    const sum = Object.values(cells).reduce((acc, v) => acc + (Number(v) || 0), 0);
+    const sumCell = this.container.querySelector(`.cell-sum[data-r="${row}"]`);
+    if (sumCell) sumCell.textContent = new Intl.NumberFormat('ko').format(sum);
   }
 
   collectMultiResponse(qid, list) {
@@ -758,9 +954,43 @@ export class SurveyEngine {
             if (radio) radio.checked = true;
           }
         }
+      } else if (q.type === Q_TYPE.NUMBER_TABLE) {
+        if (typeof val === 'object') {
+          for (const [row, rowVal] of Object.entries(val)) {
+            if (rowVal === 'unknown') {
+              const cb = this.container.querySelector(`.row-unknown-toggle[data-q="${q.id}"][data-r="${row}"]`);
+              if (cb) {
+                cb.checked = true;
+                const tr = cb.closest('tr');
+                tr.querySelectorAll('.cell-input').forEach(inp => { inp.disabled = true; });
+                const sumCell = this.container.querySelector(`.cell-sum[data-r="${row}"]`);
+                if (sumCell) sumCell.textContent = '모름';
+              }
+            } else if (typeof rowVal === 'object') {
+              for (const [col, cellVal] of Object.entries(rowVal)) {
+                const inp = this.container.querySelector(`.cell-input[data-q="${q.id}"][data-r="${row}"][data-c="${col}"]`);
+                if (inp && cellVal !== '' && cellVal !== null && cellVal !== undefined) inp.value = cellVal;
+              }
+              this.updateNumberTableSum(q.id, row);
+            }
+          }
+        }
       } else if (q.type === Q_TYPE.TEXT) {
         const el = this.container.querySelector(`input[data-qid="${q.id}"], textarea[data-qid="${q.id}"]`);
-        if (el) el.value = val;
+        if (el) {
+          if (val === '(모름/해당없음)') {
+            const toggle = this.container.querySelector(`.unknown-toggle[data-target="${q.id}"]`);
+            if (toggle) {
+              toggle.checked = true;
+              el.disabled = true;
+              el.value = '';
+            } else {
+              el.value = val;
+            }
+          } else {
+            el.value = val;
+          }
+        }
       } else if (q.type === Q_TYPE.SINGLE || q.type === Q_TYPE.SINGLE_WITH_OTHER) {
         const list = this.container.querySelector(`.option-list[data-qid="${q.id}"]`);
         if (list) {
@@ -814,6 +1044,27 @@ export class SurveyEngine {
           const table = this.container.querySelector(`.likert-table[data-qid="${q.id}"]`);
           table?.classList.add('has-error');
           this.showError(q.id, '모든 항목에 응답해 주십시오.');
+        }
+      } else if (q.type === Q_TYPE.NUMBER_TABLE) {
+        ok = val && typeof val === 'object';
+        if (ok) {
+          for (const r of q.rows) {
+            const rv = val[r.id];
+            if (rv === 'unknown') continue;
+            if (!rv || typeof rv !== 'object') { ok = false; break; }
+            for (const c of q.columns) {
+              const cv = rv[c.id];
+              if (cv === undefined || cv === null || cv === '' || Number.isNaN(Number(cv))) {
+                ok = false; break;
+              }
+            }
+            if (!ok) break;
+          }
+        }
+        if (!ok) {
+          const wrap = this.container.querySelector(`.number-table-wrap[data-qid="${q.id}"]`);
+          wrap?.classList.add('has-error');
+          this.showError(q.id, '모든 연도·항목을 숫자로 입력하거나 "모름/해당없음"을 선택해 주십시오.');
         }
       } else if (q.type === Q_TYPE.TEXT) {
         ok = val && val.trim().length > 0;
@@ -952,14 +1203,18 @@ export class SurveyEngine {
     `;
 
     try {
+      const payload = {
+        token: this.token,
+        survey_version: SURVEY_META.version,
+        responses: { ...this.responses },
+      };
+      if (this.isReviewer() && this.comments && Object.keys(this.comments).length > 0) {
+        payload.comments = { ...this.comments };
+      }
       const res = await fetch(`${API_BASE}/api/responses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: this.token,
-          survey_version: SURVEY_META.version,
-          responses: { ...this.responses },
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) throw new Error(`Server error: ${res.status}`);

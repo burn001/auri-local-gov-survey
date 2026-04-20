@@ -88,6 +88,7 @@ async def list_responses(
             "token": 1,
             "survey_version": 1,
             "responses": 1,
+            "comments": 1,
             "submitted_at": 1,
             "updated_at": 1,
             "name": "$participant.name",
