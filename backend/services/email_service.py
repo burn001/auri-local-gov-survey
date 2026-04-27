@@ -5,14 +5,22 @@ from pathlib import Path
 from config import get_settings
 
 
-def _load_template() -> str:
-    tpl_path = Path(__file__).parent.parent / "templates" / "survey_invite.html"
+def _load_template(filename: str = "survey_invite.html") -> str:
+    tpl_path = Path(__file__).parent.parent / "templates" / filename
     return tpl_path.read_text(encoding="utf-8")
 
 
 def render_email(name: str, org: str, survey_url: str) -> str:
-    html = _load_template()
+    html = _load_template("survey_invite.html")
     return html.replace("{{name}}", name).replace("{{org}}", org).replace("{{survey_url}}", survey_url)
+
+
+def render_completion(name: str, org: str, review_url: str) -> str:
+    """응답 제출 직후 자동 발송 — 본인용 확인 링크 포함."""
+    html = _load_template("survey_complete.html")
+    return (html.replace("{{name}}", name)
+                .replace("{{org}}", org)
+                .replace("{{review_url}}", review_url))
 
 
 def render_custom(name: str, org: str, survey_url: str, body_html: str) -> str:

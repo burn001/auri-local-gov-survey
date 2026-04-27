@@ -20,6 +20,7 @@ const GATE = {
   READ_ONLY: 'read_only',
   OPEN: 'open',
   REGISTER: 'register',  // 토큰 없는 공개 진입 — 랜딩/동의/정보입력 단계 진행
+  REVIEW: 'review',      // ?review=1 진입 — 본인 응답 읽기전용 확인
 };
 
 const REG_STEP = {
@@ -38,7 +39,9 @@ const EDIT_MODE = {
 export class SurveyEngine {
   constructor(container) {
     this.container = container;
-    this.token = new URLSearchParams(window.location.search).get('token');
+    const urlParams = new URLSearchParams(window.location.search);
+    this.token = urlParams.get('token');
+    this.reviewMode = urlParams.get('review') === '1';
     this.participant = null;
     this.submitted = false;
     this.submittedAt = null;
@@ -90,8 +93,10 @@ export class SurveyEngine {
         this.responses = { ...this.responses, ...data.responses };
         this.saveResponses();
         this.submitted = true;
-        this.gate = GATE.RESUBMIT_CHOICE;
+        // ?review=1 URL 파라미터로 들어왔고 응답이 있으면 곧바로 읽기전용 화면
+        this.gate = this.reviewMode ? GATE.REVIEW : GATE.RESUBMIT_CHOICE;
       } else {
+        // 아직 응답 없으면 review 요청도 일반 설문 화면으로 (안내차)
         this.gate = GATE.OPEN;
       }
       // Q1(지자체 유형) 자동 충족 — category가 광역/기초인 경우 응답 미리 채움
@@ -533,6 +538,10 @@ export class SurveyEngine {
     }
     if (this.gate === GATE.RESUBMIT_CHOICE) {
       this.renderResubmitChoice();
+      return;
+    }
+    if (this.gate === GATE.REVIEW || this.gate === GATE.READ_ONLY) {
+      this.renderReview();
       return;
     }
 
@@ -998,9 +1007,168 @@ export class SurveyEngine {
       this.render();
     });
     this.container.querySelector('#btn-view-mode').addEventListener('click', () => {
-      this.gate = GATE.READ_ONLY;
+      this.gate = GATE.REVIEW;
       this.render();
     });
+  }
+
+  // ── 읽기전용 응답 리뷰 (?review=1 또는 RESUBMIT_CHOICE에서 진입) ──
+  renderReview() {
+    const m = SURVEY_META;
+    const p = this.participant || {};
+    const submittedStr = this.submittedAt ? this.formatDateTime(this.submittedAt) : '-';
+    const updatedStr = this.updatedAt ? this.formatDateTime(this.updatedAt) : '';
+
+    this.updateVisibleSections();
+
+    const sectionsHtml = this.visibleSections.map(s => {
+      const questionsHtml = s.questions.map(q => {
+        if (this.shouldSkipQuestion(q)) return '';
+        if (q.type === Q_TYPE.SUB_QUESTIONS) {
+          const subs = q.subQuestions.map(sq => `
+            <div class="rv-sub">
+              <div class="rv-sub-label">${this.escape(sq.label)}</div>
+              <div class="rv-sub-answer">${this.formatAnswerHtml(sq, this.responses[sq.id])}</div>
+            </div>
+          `).join('');
+          return `
+            <div class="rv-q">
+              <div class="rv-q-id">${q.id.replace(/([A-Z]+)(\d)/, '$1-$2')}</div>
+              <div class="rv-q-text">${this.escape(q.text)}</div>
+              <div class="rv-sub-group">${subs}</div>
+            </div>
+          `;
+        }
+        return `
+          <div class="rv-q">
+            <div class="rv-q-id">${q.id.replace(/([A-Z]+)(\d)/, '$1-$2')}</div>
+            <div class="rv-q-text">${this.escape(q.text)}</div>
+            <div class="rv-answer">${this.formatAnswerHtml(q, this.responses[q.id])}</div>
+          </div>
+        `;
+      }).join('');
+      return `
+        <section class="rv-section">
+          <div class="rv-section-header">
+            <span class="rv-section-tag">${this.escape(s.tag || '')}</span>
+            <h3>${this.escape(s.title)}</h3>
+            ${s.subtitle ? `<p class="rv-section-subtitle">${this.escape(s.subtitle)}</p>` : ''}
+          </div>
+          ${questionsHtml}
+        </section>
+      `;
+    }).join('');
+
+    const participantBlock = `
+      <div class="rv-participant">
+        <h3>응답자 정보</h3>
+        <dl>
+          <dt>이름</dt><dd>${this.escape(p.name || '-')}</dd>
+          <dt>이메일</dt><dd>${this.escape(p.email || '-')}</dd>
+          <dt>소속</dt><dd>${this.escape(p.org || '-')}</dd>
+          ${p.dept ? `<dt>부서</dt><dd>${this.escape(p.dept)}</dd>` : ''}
+          ${p.team ? `<dt>팀</dt><dd>${this.escape(p.team)}</dd>` : ''}
+          ${p.position ? `<dt>직위</dt><dd>${this.escape(p.position)}</dd>` : ''}
+          ${p.rank ? `<dt>직급</dt><dd>${this.escape(p.rank)}</dd>` : ''}
+          ${p.duty ? `<dt>담당업무</dt><dd>${this.escape(p.duty)}</dd>` : ''}
+          ${p.phone ? `<dt>연락처</dt><dd>${this.escape(p.phone)}</dd>` : ''}
+        </dl>
+      </div>
+    `;
+
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="rv-header">
+          <div class="rv-badge">제출 완료 · 응답 확인</div>
+          <div class="rv-institution">${m.institution}</div>
+          <h1 class="rv-title">${m.title}</h1>
+          <div class="rv-meta">
+            <dl>
+              <dt>최초 제출</dt><dd>${submittedStr}</dd>
+              ${updatedStr ? `<dt>최근 수정</dt><dd>${updatedStr}</dd>` : ''}
+            </dl>
+          </div>
+          <p class="rv-notice">
+            아래 내용은 귀하께서 제출하신 응답입니다. 본 페이지는 <strong>읽기전용</strong>이며 응답 수정은 불가합니다.
+            수정이 필요하신 경우 <strong>${this.escape(m.contact)}</strong>로 연락 주십시오.
+          </p>
+        </div>
+
+        ${participantBlock}
+
+        ${sectionsHtml}
+
+        <div class="rv-footer">
+          <p>본 실태조사에 응답해 주셔서 진심으로 감사드립니다.</p>
+          <p class="rv-footer-sub">「청사 관리에 관한 법률(가칭)」 제정을 위한 정책 기초 자료로 활용됩니다.</p>
+        </div>
+      </div>
+    `;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  formatAnswerHtml(q, val) {
+    if (val === undefined || val === null || val === '') {
+      return '<span class="rv-empty">(무응답)</span>';
+    }
+    if (q.type === Q_TYPE.SINGLE || q.type === Q_TYPE.SINGLE_WITH_OTHER) {
+      if (val === 'other') {
+        const other = this.responses[q.id + '_other'] || '';
+        return `<span class="rv-chip rv-chip-other">기타: ${this.escape(other)}</span>`;
+      }
+      const idx = typeof val === 'number' ? val : parseInt(val, 10);
+      const opt = q.options?.[idx];
+      return opt ? `<span class="rv-chip">${this.escape(opt)}</span>` : `<code>${this.escape(String(val))}</code>`;
+    }
+    if (q.type === Q_TYPE.MULTI || q.type === Q_TYPE.MULTI_WITH_OTHER ||
+        q.type === Q_TYPE.MULTI_LIMIT || q.type === Q_TYPE.MULTI_LIMIT_OTHER) {
+      if (!Array.isArray(val)) return `<code>${this.escape(JSON.stringify(val))}</code>`;
+      if (val.length === 0) return '<span class="rv-empty">(선택 없음)</span>';
+      return val.map(v => {
+        if (v === 'other') {
+          const other = this.responses[q.id + '_other'] || '';
+          return `<span class="rv-chip rv-chip-other">기타: ${this.escape(other)}</span>`;
+        }
+        const idx = typeof v === 'number' ? v : parseInt(v, 10);
+        const opt = q.options?.[idx];
+        return `<span class="rv-chip">${this.escape(opt || String(v))}</span>`;
+      }).join(' ');
+    }
+    if (q.type === Q_TYPE.NUMBER_TABLE) {
+      if (typeof val !== 'object') return `<code>${this.escape(JSON.stringify(val))}</code>`;
+      const fmt = (n) => new Intl.NumberFormat('ko').format(Number(n) || 0);
+      const header = `<tr><th>연도</th>${q.columns.map(c => `<th>${this.escape(c.label)}</th>`).join('')}<th>합계</th></tr>`;
+      const rows = q.rows.map(r => {
+        const rv = val[r.id];
+        if (rv === 'unknown') {
+          return `<tr><td>${this.escape(r.label)}</td><td colspan="${q.columns.length + 1}" class="rv-empty">모름/해당없음</td></tr>`;
+        }
+        if (!rv || typeof rv !== 'object') {
+          return `<tr><td>${this.escape(r.label)}</td><td colspan="${q.columns.length + 1}" class="rv-empty">(무응답)</td></tr>`;
+        }
+        const cells = q.columns.map(c => `<td class="rv-num">${fmt(rv[c.id])}</td>`).join('');
+        const sum = q.columns.reduce((a, c) => a + (Number(rv[c.id]) || 0), 0);
+        return `<tr><td>${this.escape(r.label)}</td>${cells}<td class="rv-num rv-sum">${fmt(sum)}</td></tr>`;
+      }).join('');
+      const unitNote = q.unit ? `<div class="rv-unit">단위: ${this.escape(q.unit)}</div>` : '';
+      return `${unitNote}<table class="rv-number-table"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
+    }
+    if (q.type === Q_TYPE.LIKERT_TABLE) {
+      if (typeof val !== 'object') return `<code>${this.escape(JSON.stringify(val))}</code>`;
+      const rows = q.items.map((item, i) => {
+        const v = val[i];
+        const label = v ? (q.scaleLabels?.[v - 1] || v) : '(무응답)';
+        const cls = v ? 'rv-likert-val' : 'rv-empty';
+        return `<tr><td>${this.escape(item)}</td><td class="${cls}">${this.escape(String(label))}</td></tr>`;
+      }).join('');
+      return `<table class="rv-likert-table"><tbody>${rows}</tbody></table>`;
+    }
+    if (q.type === Q_TYPE.TEXT) {
+      const s = String(val);
+      if (s === '(모름/해당없음)') return '<span class="rv-empty">모름/해당없음</span>';
+      return `<div class="rv-text">${this.escape(s).replace(/\n/g, '<br>')}</div>`;
+    }
+    return `<code>${this.escape(JSON.stringify(val))}</code>`;
   }
 
   // ── Status Bar (공통 상단) ──

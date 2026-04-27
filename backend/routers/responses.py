@@ -1,5 +1,6 @@
+import logging
 from fastapi import APIRouter, Request, HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 from models import (
     ResponseSubmit,
@@ -12,11 +13,57 @@ from models import (
 )
 from services.db import get_db
 from services.token_service import generate_token
+from services.email_service import render_completion, send_email
 from config import get_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["responses"])
 
 ALLOWED_SELF_CATEGORIES = {"광역자치단체", "기초자치단체"}
+
+
+async def _send_completion_email(participant: dict, token: str) -> None:
+    """응답 제출 직후 자동 발송. 실패해도 응답 처리는 영향받지 않음."""
+    s = get_settings()
+    if not s.GMAIL_USER or not s.GMAIL_APP_PASSWORD:
+        return
+    if not participant.get("email"):
+        return
+    db = get_db()
+    review_url = f"{s.SURVEY_BASE_URL}/?token={token}&review=1"
+    subject = "[AURI 청사관리실태조사] 응답 완료 안내 — 내 응답 확인 링크"
+    html = render_completion(
+        participant.get("name", ""),
+        participant.get("org", ""),
+        review_url,
+    )
+    now = datetime.now(timezone.utc)
+    log_doc = {
+        "batch_id": "auto-completion",
+        "token": token,
+        "email": participant["email"],
+        "name": participant.get("name", ""),
+        "org": participant.get("org", ""),
+        "category": participant.get("category", ""),
+        "type": "completion",
+        "subject": subject,
+        "admin_email": "system",
+        "admin_name": "자동 발송",
+        "sent_at": now,
+    }
+    try:
+        send_email(participant["email"], subject, html)
+        log_doc.update({"status": "sent", "error": ""})
+        await db.email_logs.insert_one(log_doc)
+    except Exception as e:
+        err = str(e)
+        logger.warning(f"Completion email failed for {participant['email']}: {err}")
+        log_doc.update({"status": "failed", "error": err})
+        try:
+            await db.email_logs.insert_one(log_doc)
+        except Exception:
+            pass
 
 
 async def _require_reviewer(token: str) -> dict:
@@ -439,6 +486,8 @@ async def submit_response(body: ResponseSubmit, request: Request):
             {"token": body.token},
             {"$set": update_fields},
         )
+        if participant.get("category") != "연구진":
+            await _send_completion_email(participant, body.token)
         return {"status": "created", "token": body.token}
 
     record = ResponseRecord(
@@ -451,6 +500,8 @@ async def submit_response(body: ResponseSubmit, request: Request):
         user_agent=ua,
     )
     await db.responses.insert_one(record.model_dump())
+    if participant.get("category") != "연구진":
+        await _send_completion_email(participant, body.token)
     return {"status": "created", "token": body.token}
 
 

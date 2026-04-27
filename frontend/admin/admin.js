@@ -191,7 +191,7 @@ function renderParticipants() {
       const lastAt = p.email_last_sent_at || p.email_sent_at;
       const lastStatus = p.email_last_status || (p.email_sent ? 'sent' : '');
       const lastType = p.email_last_type || '';
-      const typeLabel = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자' }[lastType] || '';
+      const typeLabel = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자', completion: '완료알림' }[lastType] || '';
       const sentTime = lastAt ? `${fmtKST(lastAt)}<br><span style="color:var(--text3);font-size:11px">${relTime(lastAt)}</span>` : '';
 
       let sendBadge;
@@ -345,7 +345,7 @@ async function showEmailLogs(token, name) {
   try {
     const data = await api(`/api/admin/email/logs?token=${encodeURIComponent(token)}&limit=100`);
     const logs = data.data || [];
-    const typeLabels = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자' };
+    const typeLabels = { invite: '초대', reminder: '추가요청', deadline: '마감알림', custom: '사용자', completion: '완료알림' };
 
     const rows = logs.map(l => {
       const statusBadge = l.status === 'sent'
