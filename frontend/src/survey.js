@@ -643,23 +643,32 @@ export class SurveyEngine {
           <p class="register-hint">「개인정보 보호법」 제15조에 따라 아래 사항을 안내드립니다.</p>
 
           <div class="consent-block">
-            <h3>① 필수동의 — 설문 응답 처리·분석 목적</h3>
+            <h3>① 필수동의 — 응답자 식별 목적 (개인정보 최소 수집)</h3>
             <table class="consent-table">
               <tbody>
                 <tr><th>수집 항목</th>
-                  <td>이름, 이메일, 소속(시·도/시·군·구), 부서·팀·직위·직급, 담당업무, 사무실 연락처, 설문 응답 내용</td></tr>
+                  <td><strong>이름, 이메일</strong></td></tr>
                 <tr><th>수집·이용 목적</th>
-                  <td>설문 응답자 식별, 응답 내용 분석, 「청사 관리에 관한 법률(가칭)」 제정 기초자료 작성</td></tr>
+                  <td>중복 응답 방지, 응답 완료 안내 메일 발송, 응답 수정 요청 시 본인 확인</td></tr>
                 <tr><th>보유·이용 기간</th>
-                  <td>연구 종료 후 3년 (관련 법령에 따른 보존이 필요한 경우 해당 기간까지)</td></tr>
+                  <td>연구 종료 후 즉시 파기 (사례품 지급 분쟁 발생 시 6개월까지 한정 보존)</td></tr>
                 <tr><th>거부 권리</th>
-                  <td>동의를 거부할 수 있으며, 다만 거부 시 본 설문에 참여하실 수 없습니다.</td></tr>
+                  <td>동의를 거부할 수 있으며, 거부 시 본 설문에 참여하실 수 없습니다.</td></tr>
               </tbody>
             </table>
             <label class="consent-check">
               <input type="checkbox" id="reg-consent-pi" ${d.consent_pi ? 'checked' : ''}>
-              <span>위 사항을 충분히 이해하였으며, 개인정보 수집·이용에 <strong>동의합니다(필수).</strong></span>
+              <span>위 사항을 충분히 이해하였으며, 개인정보(이름·이메일) 수집·이용에 <strong>동의합니다(필수).</strong></span>
             </label>
+          </div>
+
+          <div class="consent-info">
+            <h3>ⓘ 안내 — 통계 처리 항목 (별도 동의 불요)</h3>
+            <p>
+              소속(시·도/시·군·구)·부서·팀·직위·직급·담당업무·사무실 연락처와 설문 응답 내용은
+              「<strong>통계법」 제33조(비밀의 보호)</strong>에 따라 통계 처리되어 <strong>개인을 식별할 수 없는 형태</strong>로만 분석·공표됩니다.
+              따라서 별도의 동의 절차를 거치지 않으며, 보고서·논문 등에서 개별 응답자 또는 기관의 답변이 그대로 노출되지 않습니다.
+            </p>
           </div>
 
           <div class="consent-block">

@@ -1557,6 +1557,33 @@ body {
   background: #fcfcfc;
 }
 
+.consent-info {
+  border-left: 3px solid #d6d6d6;
+  background: #f9fafb;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+}
+
+.consent-info h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--c-text-secondary);
+}
+
+.consent-info p {
+  font-size: 12px;
+  color: var(--c-text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.consent-info strong {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
 .consent-table {
   width: 100%;
   font-size: 12px;
