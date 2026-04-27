@@ -19,7 +19,16 @@ const GATE = {
   RESUBMIT_CHOICE: 'resubmit_choice',
   READ_ONLY: 'read_only',
   OPEN: 'open',
+  REGISTER: 'register',  // 토큰 없는 공개 진입 — 랜딩/동의/정보입력 단계 진행
 };
+
+const REG_STEP = {
+  LANDING: 'landing',
+  CONSENT: 'consent',
+  INFO: 'info',
+};
+
+const REGISTER_DRAFT_KEY = 'auri_register_draft';
 
 const EDIT_MODE = {
   NEW: 'new',
@@ -35,7 +44,11 @@ export class SurveyEngine {
     this.submittedAt = null;
     this.updatedAt = null;
     this.editMode = EDIT_MODE.NEW;
-    this.gate = this.token ? GATE.LOADING : GATE.DENIED;
+    this.gate = this.token ? GATE.LOADING : GATE.REGISTER;
+    this.regStep = REG_STEP.LANDING;
+    this.regDraft = this.loadRegisterDraft();
+    this.regError = '';
+    this.regSubmitting = false;
     this.responses = this.loadResponses();
     this.threads = {};                // { qid: [comment, ...] } — fetched from server
     this.threadsLoading = false;
@@ -80,6 +93,12 @@ export class SurveyEngine {
         this.gate = GATE.RESUBMIT_CHOICE;
       } else {
         this.gate = GATE.OPEN;
+      }
+      // Q1(지자체 유형) 자동 충족 — category가 광역/기초인 경우 응답 미리 채움
+      if (this.responses['Q1'] === undefined) {
+        if (data.category === '광역자치단체') this.responses['Q1'] = 0;
+        else if (data.category === '기초자치단체') this.responses['Q1'] = 1;
+        if (this.responses['Q1'] !== undefined) this.saveResponses();
       }
     } catch {
       this.gate = GATE.DENIED;
@@ -471,6 +490,33 @@ export class SurveyEngine {
     });
   }
 
+  // ── Persistence: Register Draft ──
+  loadRegisterDraft() {
+    try {
+      const saved = localStorage.getItem(REGISTER_DRAFT_KEY);
+      return saved ? JSON.parse(saved) : this.emptyRegisterDraft();
+    } catch { return this.emptyRegisterDraft(); }
+  }
+
+  emptyRegisterDraft() {
+    return {
+      name: '', email: '', org: '', category: '',
+      dept: '', team: '', position: '', rank: '', duty: '', phone: '',
+      consent_pi: false, consent_reward: false,
+      reward_name: '', reward_phone: '',
+    };
+  }
+
+  saveRegisterDraft() {
+    try {
+      localStorage.setItem(REGISTER_DRAFT_KEY, JSON.stringify(this.regDraft));
+    } catch {}
+  }
+
+  clearRegisterDraft() {
+    try { localStorage.removeItem(REGISTER_DRAFT_KEY); } catch {}
+  }
+
   // ── Render Router ──
   render() {
     if (this.gate === GATE.LOADING) {
@@ -479,6 +525,10 @@ export class SurveyEngine {
     }
     if (this.gate === GATE.DENIED) {
       this.renderAccessDenied();
+      return;
+    }
+    if (this.gate === GATE.REGISTER) {
+      this.renderRegister();
       return;
     }
     if (this.gate === GATE.RESUBMIT_CHOICE) {
@@ -508,6 +558,380 @@ export class SurveyEngine {
         </div>
       </div>
     `;
+  }
+
+  // ── Register (공개 단일 링크 자가등록) ──
+  renderRegister() {
+    if (this.regStep === REG_STEP.LANDING) return this.renderRegisterLanding();
+    if (this.regStep === REG_STEP.CONSENT) return this.renderRegisterConsent();
+    if (this.regStep === REG_STEP.INFO) return this.renderRegisterInfo();
+  }
+
+  renderRegisterLanding() {
+    const m = SURVEY_META;
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="register-landing">
+          <div class="register-institution">${m.institution}</div>
+          <h1 class="register-title">${m.title}</h1>
+          <div class="register-subtitle">${m.subtitle}</div>
+
+          <div class="register-card">
+            <h2>조사 목적</h2>
+            <p>본 조사는 국가 공공자산인 지방자치단체 청사의 체계적 관리를 위한 법적 기반 마련과,
+               중앙·지방 간 관리 격차 해소를 위한 정책 기초 자료 확보를 목적으로 합니다.
+               「청사 관리에 관한 법률(가칭)」 제정을 위한 실태조사의 일환으로 수행됩니다.</p>
+          </div>
+
+          <div class="register-card">
+            <h2>참여 안내</h2>
+            <ul>
+              <li>응답 대상: 전국 광역·기초 지방자치단체 <strong>청사 관리·공유재산 담당자</strong></li>
+              <li>소요 시간: 약 ${m.duration}</li>
+              <li>응답 중간에 자동 저장되며 링크를 다시 열면 이어서 작성할 수 있습니다.</li>
+              <li>모든 응답은 「통계법」 제33조(비밀의 보호)에 따라 통계 목적으로만 사용됩니다.</li>
+            </ul>
+          </div>
+
+          <div class="register-card register-reward">
+            <h2>🎁 사례품 안내</h2>
+            <p>설문에 끝까지 응답해 주신 분께는 감사의 표시로 <strong>모바일 쿠폰</strong>을 발송해 드립니다.
+               (수령을 원하시는 경우 다음 단계에서 휴대폰 번호 활용에 동의해 주시기 바랍니다.)</p>
+          </div>
+
+          <div class="register-meta">
+            <dl>
+              <dt>조사기관</dt><dd>${m.institution}</dd>
+              <dt>연구책임</dt><dd>${m.researcher}</dd>
+              <dt>문의</dt><dd>${m.contact}</dd>
+            </dl>
+          </div>
+
+          <button class="btn-start" id="btn-reg-start">참여하기 →</button>
+        </div>
+      </div>
+    `;
+    this.container.querySelector('#btn-reg-start')?.addEventListener('click', () => {
+      this.regStep = REG_STEP.CONSENT;
+      this.render();
+    });
+  }
+
+  renderRegisterConsent() {
+    const d = this.regDraft;
+    const errHtml = this.regError ? `<p class="register-error">${this.escape(this.regError)}</p>` : '';
+
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="register-stepper">
+          <span class="step done">①</span><span class="step-line"></span>
+          <span class="step active">②</span><span class="step-line"></span>
+          <span class="step">③</span>
+        </div>
+
+        <div class="register-card">
+          <h2>개인정보 수집·이용 동의</h2>
+          <p class="register-hint">「개인정보 보호법」 제15조에 따라 아래 사항을 안내드립니다.</p>
+
+          <div class="consent-block">
+            <h3>① 필수동의 — 설문 응답 처리·분석 목적</h3>
+            <table class="consent-table">
+              <tbody>
+                <tr><th>수집 항목</th>
+                  <td>이름, 이메일, 소속(시·도/시·군·구), 부서·팀·직위·직급, 담당업무, 사무실 연락처, 설문 응답 내용</td></tr>
+                <tr><th>수집·이용 목적</th>
+                  <td>설문 응답자 식별, 응답 내용 분석, 「청사 관리에 관한 법률(가칭)」 제정 기초자료 작성</td></tr>
+                <tr><th>보유·이용 기간</th>
+                  <td>연구 종료 후 3년 (관련 법령에 따른 보존이 필요한 경우 해당 기간까지)</td></tr>
+                <tr><th>거부 권리</th>
+                  <td>동의를 거부할 수 있으며, 다만 거부 시 본 설문에 참여하실 수 없습니다.</td></tr>
+              </tbody>
+            </table>
+            <label class="consent-check">
+              <input type="checkbox" id="reg-consent-pi" ${d.consent_pi ? 'checked' : ''}>
+              <span>위 사항을 충분히 이해하였으며, 개인정보 수집·이용에 <strong>동의합니다(필수).</strong></span>
+            </label>
+          </div>
+
+          <div class="consent-block">
+            <h3>② 선택동의 — 사례품(모바일 쿠폰) 발송 목적</h3>
+            <table class="consent-table">
+              <tbody>
+                <tr><th>수집 항목</th>
+                  <td>수령자명, 휴대폰 번호</td></tr>
+                <tr><th>수집·이용 목적</th>
+                  <td>설문 참여 사례품(모바일 쿠폰) 발송</td></tr>
+                <tr><th>보유·이용 기간</th>
+                  <td>발송 완료 후 즉시 파기 (지급 분쟁 시 6개월까지 보존)</td></tr>
+                <tr><th>거부 권리</th>
+                  <td>동의를 거부할 수 있으며, 거부 시 사례품 발송이 불가합니다. (설문 참여는 가능)</td></tr>
+              </tbody>
+            </table>
+            <label class="consent-check">
+              <input type="checkbox" id="reg-consent-reward" ${d.consent_reward ? 'checked' : ''}>
+              <span>사례품 발송을 위한 휴대폰 번호 수집·이용에 <strong>동의합니다(선택).</strong></span>
+            </label>
+          </div>
+
+          ${errHtml}
+
+          <div class="register-actions">
+            <button class="btn btn-prev" id="btn-reg-back">← 이전</button>
+            <button class="btn btn-next" id="btn-reg-next">다음 →</button>
+          </div>
+        </div>
+      </div>
+    `;
+    this.bindConsentEvents();
+  }
+
+  bindConsentEvents() {
+    this.container.querySelector('#btn-reg-back')?.addEventListener('click', () => {
+      this.regStep = REG_STEP.LANDING;
+      this.regError = '';
+      this.render();
+    });
+    this.container.querySelector('#reg-consent-pi')?.addEventListener('change', (e) => {
+      this.regDraft.consent_pi = e.target.checked;
+      this.saveRegisterDraft();
+    });
+    this.container.querySelector('#reg-consent-reward')?.addEventListener('change', (e) => {
+      this.regDraft.consent_reward = e.target.checked;
+      this.saveRegisterDraft();
+    });
+    this.container.querySelector('#btn-reg-next')?.addEventListener('click', () => {
+      if (!this.regDraft.consent_pi) {
+        this.regError = '필수동의(①)에 체크해 주셔야 다음 단계로 진행할 수 있습니다.';
+        this.render();
+        return;
+      }
+      this.regError = '';
+      this.regStep = REG_STEP.INFO;
+      this.render();
+    });
+  }
+
+  renderRegisterInfo() {
+    const d = this.regDraft;
+    const errHtml = this.regError ? `<p class="register-error">${this.escape(this.regError)}</p>` : '';
+    const submittingHtml = this.regSubmitting
+      ? '<span class="register-submitting">등록 중…</span>' : '';
+
+    const rewardBlock = d.consent_reward ? `
+      <div class="register-section">
+        <h3>🎁 사례품 수령 정보 <span class="required">(선택동의 시 필수)</span></h3>
+        <p class="register-hint">설문 완료 후 입력하신 휴대폰 번호로 모바일 쿠폰이 발송됩니다.</p>
+        <div class="register-grid">
+          <label>
+            <span>수령자명 *</span>
+            <input type="text" id="reg-reward-name" value="${this.escape(d.reward_name)}" placeholder="응답자 본인" />
+          </label>
+          <label>
+            <span>휴대폰 번호 *</span>
+            <input type="tel" id="reg-reward-phone" value="${this.escape(d.reward_phone)}" placeholder="010-0000-0000" />
+          </label>
+        </div>
+      </div>
+    ` : `
+      <div class="register-skip-reward">
+        사례품 발송 동의를 하지 않으셨으므로 휴대폰 번호는 수집하지 않습니다.
+        (이전 단계에서 동의를 변경하실 수 있습니다.)
+      </div>
+    `;
+
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="register-stepper">
+          <span class="step done">①</span><span class="step-line"></span>
+          <span class="step done">②</span><span class="step-line"></span>
+          <span class="step active">③</span>
+        </div>
+
+        <div class="register-card">
+          <h2>응답자 정보 입력</h2>
+          <p class="register-hint">아래 정보는 설문 응답 식별과 통계 분석에만 사용됩니다.
+             <span class="required">*</span> 표시는 필수 항목입니다.</p>
+
+          <div class="register-section">
+            <h3>① 응답자 본인</h3>
+            <div class="register-grid">
+              <label>
+                <span>이름 *</span>
+                <input type="text" id="reg-name" value="${this.escape(d.name)}" />
+              </label>
+              <label>
+                <span>이메일 * <small>(설문 식별자, 정확히 입력해 주세요)</small></span>
+                <input type="email" id="reg-email" value="${this.escape(d.email)}" placeholder="example@example.go.kr" />
+              </label>
+              <label>
+                <span>사무실 번호</span>
+                <input type="tel" id="reg-phone" value="${this.escape(d.phone)}" placeholder="02-0000-0000" />
+              </label>
+            </div>
+          </div>
+
+          <div class="register-section">
+            <h3>② 소속 기관</h3>
+            <div class="register-grid">
+              <label class="full">
+                <span>지자체 유형 *</span>
+                <div class="register-radio-row">
+                  <label class="register-radio">
+                    <input type="radio" name="reg-category" value="광역자치단체" ${d.category === '광역자치단체' ? 'checked' : ''}>
+                    <span>광역자치단체 (시·도)</span>
+                  </label>
+                  <label class="register-radio">
+                    <input type="radio" name="reg-category" value="기초자치단체" ${d.category === '기초자치단체' ? 'checked' : ''}>
+                    <span>기초자치단체 (시·군·구)</span>
+                  </label>
+                </div>
+              </label>
+              <label class="full">
+                <span>지자체명 * <small>(예: 서울특별시 / 수원시 / 대구광역시 동구)</small></span>
+                <input type="text" id="reg-org" value="${this.escape(d.org)}" placeholder="시·도 / 시·군·구 명칭" />
+              </label>
+              <label>
+                <span>부서</span>
+                <input type="text" id="reg-dept" value="${this.escape(d.dept)}" placeholder="예) 재산관리과" />
+              </label>
+              <label>
+                <span>팀</span>
+                <input type="text" id="reg-team" value="${this.escape(d.team)}" placeholder="예) 재산정책팀" />
+              </label>
+              <label>
+                <span>직위</span>
+                <input type="text" id="reg-position" value="${this.escape(d.position)}" placeholder="예) 팀장, 주무관" />
+              </label>
+              <label>
+                <span>직급</span>
+                <input type="text" id="reg-rank" value="${this.escape(d.rank)}" placeholder="예) 행정5급" />
+              </label>
+              <label class="full">
+                <span>담당업무</span>
+                <input type="text" id="reg-duty" value="${this.escape(d.duty)}" placeholder="예) 청사 유지관리 총괄" />
+              </label>
+            </div>
+          </div>
+
+          ${rewardBlock}
+
+          ${errHtml}
+
+          <div class="register-actions">
+            <button class="btn btn-prev" id="btn-reg-back">← 이전</button>
+            <button class="btn btn-next" id="btn-reg-submit" ${this.regSubmitting ? 'disabled' : ''}>
+              ${this.regSubmitting ? '등록 중…' : '등록하고 설문 시작 →'}
+            </button>
+          </div>
+          ${submittingHtml}
+        </div>
+      </div>
+    `;
+    this.bindRegisterInfoEvents();
+  }
+
+  bindRegisterInfoEvents() {
+    const bind = (id, key, isCheckbox = false) => {
+      const el = this.container.querySelector(`#${id}`);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        this.regDraft[key] = isCheckbox ? el.checked : el.value;
+        this.saveRegisterDraft();
+      });
+    };
+    bind('reg-name', 'name');
+    bind('reg-email', 'email');
+    bind('reg-phone', 'phone');
+    bind('reg-org', 'org');
+    bind('reg-dept', 'dept');
+    bind('reg-team', 'team');
+    bind('reg-position', 'position');
+    bind('reg-rank', 'rank');
+    bind('reg-duty', 'duty');
+    bind('reg-reward-name', 'reward_name');
+    bind('reg-reward-phone', 'reward_phone');
+
+    this.container.querySelectorAll('input[name="reg-category"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          this.regDraft.category = e.target.value;
+          this.saveRegisterDraft();
+        }
+      });
+    });
+
+    this.container.querySelector('#btn-reg-back')?.addEventListener('click', () => {
+      this.regStep = REG_STEP.CONSENT;
+      this.regError = '';
+      this.render();
+    });
+    this.container.querySelector('#btn-reg-submit')?.addEventListener('click', () => {
+      this.submitRegistration();
+    });
+  }
+
+  async submitRegistration() {
+    const d = this.regDraft;
+    const errors = [];
+    if (!(d.name || '').trim()) errors.push('이름을 입력해 주십시오.');
+    const email = (d.email || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('올바른 이메일을 입력해 주십시오.');
+    if (d.category !== '광역자치단체' && d.category !== '기초자치단체') errors.push('지자체 유형(광역/기초)을 선택해 주십시오.');
+    if (!(d.org || '').trim()) errors.push('지자체명을 입력해 주십시오.');
+    if (d.consent_reward) {
+      if (!(d.reward_name || '').trim()) errors.push('사례품 수령자명을 입력해 주십시오.');
+      const phone = (d.reward_phone || '').trim();
+      if (!phone || !/^[\d\-\s+()]{9,}$/.test(phone)) errors.push('올바른 휴대폰 번호를 입력해 주십시오.');
+    }
+    if (errors.length) {
+      this.regError = errors.join(' / ');
+      this.render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    this.regError = '';
+    this.regSubmitting = true;
+    this.render();
+
+    try {
+      const payload = {
+        name: d.name.trim(),
+        email: email,
+        org: (d.org || '').trim(),
+        category: d.category,
+        dept: (d.dept || '').trim(),
+        team: (d.team || '').trim(),
+        position: (d.position || '').trim(),
+        rank: (d.rank || '').trim(),
+        duty: (d.duty || '').trim(),
+        phone: (d.phone || '').trim(),
+        consent_pi: !!d.consent_pi,
+        consent_reward: !!d.consent_reward,
+        reward_name: d.consent_reward ? (d.reward_name || '').trim() : '',
+        reward_phone: d.consent_reward ? (d.reward_phone || '').trim() : '',
+      };
+      const res = await fetch(`${API_BASE}/api/survey/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `등록 실패 (${res.status})`);
+      }
+      const data = await res.json();
+      this.clearRegisterDraft();
+      // 발급된 토큰으로 이동 — 페이지 reload하여 토큰 인증 흐름 진입
+      const url = new URL(window.location.href);
+      url.searchParams.set('token', data.token);
+      window.location.href = url.toString();
+    } catch (e) {
+      this.regError = e.message || '등록 중 오류가 발생했습니다. 잠시 후 다시 시도해 주십시오.';
+      this.regSubmitting = false;
+      this.render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }
 
   // ── Access Denied ──
@@ -881,7 +1305,17 @@ export class SurveyEngine {
     this.restoreValues(section);
   }
 
+  shouldSkipQuestion(q) {
+    // Q1(지자체 유형)은 등록·import 시점에 category로 이미 결정되므로 화면에서 생략한다.
+    if (q.id === 'Q1') {
+      const cat = this.participant?.category;
+      if (cat === '광역자치단체' || cat === '기초자치단체') return true;
+    }
+    return false;
+  }
+
   renderQuestion(q) {
+    if (this.shouldSkipQuestion(q)) return '';
     if (q.type === Q_TYPE.SUB_QUESTIONS) {
       return this.renderSubQuestions(q);
     }
@@ -1469,6 +1903,7 @@ export class SurveyEngine {
   getAllQuestions(section) {
     const result = [];
     for (const q of section.questions) {
+      if (this.shouldSkipQuestion(q)) continue;
       if (q.type === Q_TYPE.SUB_QUESTIONS) {
         for (const sq of q.subQuestions) result.push(sq);
       } else {

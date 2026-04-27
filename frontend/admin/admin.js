@@ -141,8 +141,11 @@ function relTime(iso) {
 async function loadParticipants(page = 0) {
   pPage = page;
   const cat = document.getElementById('p-category').value;
-  const q = `?skip=0&limit=5000` + (cat ? `&category=${encodeURIComponent(cat)}` : '');
-  const data = await api('/api/admin/participants' + q);
+  const src = document.getElementById('p-source').value;
+  const params = new URLSearchParams({ skip: '0', limit: '5000' });
+  if (cat) params.set('category', cat);
+  if (src) params.set('source', src);
+  const data = await api('/api/admin/participants?' + params.toString());
   pCache = data.data;
   pSelected.clear();
   renderParticipants();
@@ -180,8 +183,8 @@ function renderParticipants() {
   document.getElementById('p-table').innerHTML = `<table>
     <thead><tr>
       <th class="checkbox-col"><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="togglePageSelect(this.checked)"></th>
-      <th>이름</th><th>소속(지자체)</th><th>구분</th><th>이메일</th>
-      <th>발송</th><th>응답</th><th>토큰</th>
+      <th>이름</th><th>소속(지자체)</th><th>구분</th><th>출처</th><th>이메일</th>
+      <th>발송</th><th>응답</th><th>사례품</th><th>토큰</th>
     </tr></thead>
     <tbody>${rows.map(p => {
       const count = p.email_sent_count || 0;
@@ -210,14 +213,31 @@ function renderParticipants() {
         ? `<span class="badge badge-blue">응답</span><div style="font-size:11px;color:var(--text3);margin-top:2px">${fmtKST(p.response_submitted_at)}</div>`
         : ((count > 0 || p.email_sent) ? '<span class="badge badge-orange">미응답</span>' : '<span class="badge badge-gray">-</span>');
       const link = `${SURVEY_BASE}/?token=${p.token}`;
+      const source = p.source || 'imported';
+      const sourceBadge = source === 'self'
+        ? '<span class="badge badge-purple">자가등록</span>'
+        : '<span class="badge badge-gray">사전 import</span>';
+      let rewardCell = '<span style="color:#bbb">-</span>';
+      if (p.consent_reward) {
+        const rn = (p.reward_name || '').replace(/'/g, "&#039;");
+        const rp = (p.reward_phone || '').replace(/'/g, "&#039;");
+        rewardCell = `<div style="font-size:11px;line-height:1.4">
+            <div style="font-weight:500">🎁 ${rn || '(미입력)'}</div>
+            <div style="color:#666;font-family:monospace">${rp || '-'}</div>
+          </div>`;
+      } else if (source === 'self') {
+        rewardCell = '<span style="color:#aaa;font-size:11px">미동의</span>';
+      }
       return `<tr>
         <td class="checkbox-col"><input type="checkbox" ${pSelected.has(p.token) ? 'checked' : ''} onchange="toggleRowSelect('${p.token}', this.checked)"></td>
         <td>${p.name}</td>
         <td>${p.org || ''}</td>
         <td><span class="badge badge-blue">${p.category || ''}</span></td>
+        <td>${sourceBadge}</td>
         <td style="font-size:12px">${p.email}</td>
         <td style="min-width:180px">${sendBadge} ${logBtn}</td>
         <td style="min-width:150px">${respBadge}</td>
+        <td style="min-width:140px">${rewardCell}</td>
         <td><code style="font-size:11px;cursor:pointer" title="클릭하여 링크 복사" onclick="navigator.clipboard.writeText('${link}');toast('링크 복사됨')">${p.token}</code></td>
       </tr>`;
     }).join('')}</tbody>
@@ -240,6 +260,12 @@ function renderParticipants() {
   const sendBtn = document.getElementById('btn-send');
   sendBtn.disabled = pSelected.size === 0;
   sendBtn.textContent = `선택 발송 (${pSelected.size})`;
+
+  const customBtn = document.getElementById('btn-custom-send');
+  if (customBtn) {
+    customBtn.disabled = pSelected.size === 0;
+    customBtn.textContent = `자유 본문 발송 (${pSelected.size})`;
+  }
 }
 
 function gotoPage(i) { pPage = i; renderParticipants(); }
@@ -256,6 +282,7 @@ function toggleRowSelect(token, checked) {
 }
 
 document.getElementById('p-category').addEventListener('change', () => loadParticipants(0));
+document.getElementById('p-source').addEventListener('change', () => loadParticipants(0));
 document.getElementById('p-search').addEventListener('input', () => { pPage = 0; renderParticipants(); });
 document.getElementById('p-send-status').addEventListener('change', () => { pPage = 0; renderParticipants(); });
 document.getElementById('p-resp-status').addEventListener('change', () => { pPage = 0; renderParticipants(); });
@@ -355,9 +382,9 @@ function closeLogModal(e) {
 }
 
 function exportParticipantLinks() {
-  const rows = [['name', 'email', 'org', 'category', 'token', 'email_sent_at_kst', 'responded', 'survey_link']];
+  const rows = [['name', 'email', 'org', 'category', 'source', 'token', 'email_sent_at_kst', 'responded', 'survey_link']];
   pCache.forEach(p => {
-    rows.push([p.name, p.email, p.org || '', p.category || '', p.token,
+    rows.push([p.name, p.email, p.org || '', p.category || '', p.source || 'imported', p.token,
       p.email_sent_at ? fmtKST(p.email_sent_at) : '',
       p.responded ? 'Y' : 'N',
       `${SURVEY_BASE}/?token=${p.token}`]);
@@ -368,6 +395,102 @@ function exportParticipantLinks() {
   a.href = URL.createObjectURL(blob);
   a.download = 'participants_links.csv';
   a.click();
+}
+
+function exportRewardCSV() {
+  const eligible = pCache.filter(p => p.consent_reward && p.responded);
+  if (eligible.length === 0) {
+    toast('\uc0ac\ub840\ud488 \ubc1c\uc1a1 \ub300\uc0c1\uc774 \uc5c6\uc2b5\ub2c8\ub2e4 (\uc120\ud0dd\ub3d9\uc758 + \uc751\ub2f5\uc644\ub8cc \uae30\uc900).', 'error');
+    return;
+  }
+  const rows = [['\uc774\ub984', '\uc774\uba54\uc77c', '\uc9c0\uc790\uccb4', '\uad6c\ubd84', '\uc218\ub839\uc790\uba85', '\ud734\ub300\ud3f0', '\uc751\ub2f5\uc77c\uc2dc', '\ub3d9\uc758\uc77c\uc2dc']];
+  eligible.forEach(p => {
+    rows.push([
+      p.name || '', p.email || '', p.org || '', p.category || '',
+      p.reward_name || '', p.reward_phone || '',
+      p.response_submitted_at ? fmtKST(p.response_submitted_at) : '',
+      p.consent_reward_at ? fmtKST(p.consent_reward_at) : '',
+    ]);
+  });
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `reward_recipients_${Date.now()}.csv`;
+  a.click();
+  toast(`\uc0ac\ub840\ud488 \uba85\ub2e8 ${eligible.length}\uac74 \ub2e4\uc6b4\ub85c\ub4dc`);
+}
+
+// \u2500\u2500 Custom Email Compose (\uc790\uc720 \ubcf8\ubb38 \ubc1c\uc1a1) \u2500\u2500
+function openCustomCompose() {
+  if (pSelected.size === 0) {
+    toast('\ub300\uc0c1\uc790\ub97c \uba3c\uc800 \uc120\ud0dd\ud574 \uc8fc\uc2ed\uc2dc\uc624.', 'error');
+    return;
+  }
+  const tokens = [...pSelected];
+  const recipients = pCache.filter(p => tokens.includes(p.token));
+  document.getElementById('custom-recipient-count').textContent = String(recipients.length);
+  document.getElementById('custom-recipients-preview').innerHTML =
+    recipients.slice(0, 50).map(p =>
+      `<div>\u00b7 ${p.name} (${p.email}) \u2014 ${p.org || ''}</div>`
+    ).join('') + (recipients.length > 50 ? `<div style="margin-top:4px;color:#999">\u2026 \uc678 ${recipients.length - 50}\uba85</div>` : '');
+  document.getElementById('custom-error').textContent = '';
+  document.getElementById('custom-modal').style.display = 'flex';
+}
+
+function closeCustomCompose(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('custom-modal').style.display = 'none';
+}
+
+async function customPreview() {
+  const subject = document.getElementById('custom-subject').value.trim();
+  const body_html = document.getElementById('custom-body').value;
+  if (!body_html.trim()) {
+    document.getElementById('custom-error').textContent = '\ubcf8\ubb38\uc744 \uc785\ub825\ud574 \uc8fc\uc2ed\uc2dc\uc624.';
+    return;
+  }
+  const tokens = [...pSelected];
+  try {
+    const res = await fetch(API + '/api/admin/email/custom-preview', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens, subject, body_html }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const html = await res.text();
+    if (_previewBlobUrl) URL.revokeObjectURL(_previewBlobUrl);
+    _previewBlobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    const wrap = document.getElementById('preview-body');
+    wrap.innerHTML = `<div style="padding:8px 0;font-size:12px;color:#666">\uc81c\ubaa9: <b>${subject || '(\ube48 \uc81c\ubaa9)'}</b></div><iframe src="${_previewBlobUrl}"></iframe>`;
+    document.getElementById('preview-modal').style.display = 'flex';
+  } catch (e) {
+    document.getElementById('custom-error').textContent = '\ubbf8\ub9ac\ubcf4\uae30 \uc2e4\ud328: ' + e.message;
+  }
+}
+
+async function customSend() {
+  const subject = document.getElementById('custom-subject').value.trim();
+  const body_html = document.getElementById('custom-body').value;
+  const errEl = document.getElementById('custom-error');
+  errEl.textContent = '';
+  if (!subject) { errEl.textContent = '\uc81c\ubaa9\uc744 \uc785\ub825\ud574 \uc8fc\uc2ed\uc2dc\uc624.'; return; }
+  if (!body_html.trim()) { errEl.textContent = '\ubcf8\ubb38\uc744 \uc785\ub825\ud574 \uc8fc\uc2ed\uc2dc\uc624.'; return; }
+  const tokens = [...pSelected];
+  if (tokens.length === 0) { errEl.textContent = '\uc218\uc2e0\uc790\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.'; return; }
+  if (!confirm(`${tokens.length}\uba85\uc5d0\uac8c \uc790\uc720 \ubcf8\ubb38 \uba54\uc77c\uc744 \ubc1c\uc1a1\ud569\ub2c8\ub2e4.\n\uc81c\ubaa9: ${subject}\n\uacc4\uc18d\ud560\uae4c\uc694?`)) return;
+
+  try {
+    const result = await api('/api/admin/email/custom-send', {
+      method: 'POST',
+      body: JSON.stringify({ tokens, subject, body_html }),
+    });
+    toast(`\ubc1c\uc1a1 \uc644\ub8cc: ${result.sent}\uac74 \uc131\uacf5${result.failed ? `, ${result.failed}\uac74 \uc2e4\ud328` : ''}`);
+    closeCustomCompose();
+    await loadParticipants(pPage);
+  } catch (e) {
+    errEl.textContent = '\ubc1c\uc1a1 \uc2e4\ud328: ' + e.message;
+  }
 }
 
 // ── Email Preview Modal ──
@@ -405,21 +528,31 @@ document.addEventListener('keydown', e => {
 let rCache = [];
 async function loadResponses() {
   const cat = document.getElementById('r-category').value;
-  const q = `?skip=0&limit=200` + (cat ? `&category=${cat}` : '');
-  const data = await api('/api/admin/responses' + q);
-  rCache = data.data;
+  const src = document.getElementById('r-source').value;
+  const params = new URLSearchParams({ skip: '0', limit: '200' });
+  if (cat) params.set('category', cat);
+  const data = await api('/api/admin/responses?' + params.toString());
+  // server-side에 source 필터가 없으므로 client-side 필터링
+  rCache = src
+    ? data.data.filter(r => (r.source || 'imported') === src)
+    : data.data;
 
   document.getElementById('r-table').innerHTML = `<table>
-    <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>제출일시</th><th>수정일시</th><th>상세</th></tr></thead>
-    <tbody>${data.data.map(r => {
+    <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>출처</th><th>제출일시</th><th>수정일시</th><th>상세</th></tr></thead>
+    <tbody>${rCache.map(r => {
       const cnt = r.comment_count || 0;
       const commentBadge = cnt > 0
         ? `<span class="badge badge-orange" style="margin-left:4px">💬 ${cnt}</span>`
         : '';
+      const sourceBadge = (r.source === 'self')
+        ? '<span class="badge badge-purple">자가등록</span>'
+        : '<span class="badge badge-gray">사전</span>';
+      const rewardMark = r.consent_reward ? ' <span title="사례품 동의" style="color:#7c3aed">🎁</span>' : '';
       return `<tr>
-        <td>${r.name || ''}</td>
+        <td>${r.name || ''}${rewardMark}</td>
         <td>${r.org || ''}</td>
         <td><span class="badge badge-blue">${r.category || ''}</span></td>
+        <td>${sourceBadge}</td>
         <td style="font-size:12px">${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ko') : ''}</td>
         <td style="font-size:12px">${r.updated_at ? new Date(r.updated_at).toLocaleString('ko') : '-'}</td>
         <td><button class="btn btn-sm btn-outline" onclick="showResponseDetail('${r.token}')">열기</button>${commentBadge}</td>
@@ -835,12 +968,20 @@ async function showResponseDetail(token) {
 
   await fetchThreads();
 
+  const sourceBadge = (row.source === 'self')
+    ? '<span class="badge badge-purple">자가등록</span>'
+    : '<span class="badge badge-gray">사전 import</span>';
+  const rewardLine = row.consent_reward
+    ? `<dt>사례품 수령</dt><dd>🎁 ${escapeHtml(row.reward_name || '-')} · <code style="font-size:11px">${escapeHtml(row.reward_phone || '-')}</code></dd>`
+    : (row.source === 'self' ? '<dt>사례품 수령</dt><dd style="color:#999">미동의</dd>' : '');
+
   const meta = `
     <div class="resp-meta">
       <dl>
-        <dt>응답자</dt><dd>${escapeHtml(row.name || '-')}</dd>
+        <dt>응답자</dt><dd>${escapeHtml(row.name || '-')}${row.email ? ` <span style="color:#888;font-size:11px">(${escapeHtml(row.email)})</span>` : ''}</dd>
         <dt>소속</dt><dd>${escapeHtml(row.org || '-')}</dd>
-        <dt>구분</dt><dd><span class="badge badge-blue">${escapeHtml(row.category || '-')}</span></dd>
+        <dt>구분</dt><dd><span class="badge badge-blue">${escapeHtml(row.category || '-')}</span> ${sourceBadge}</dd>
+        ${rewardLine}
         <dt>토큰</dt><dd><code style="font-size:11px">${escapeHtml(token)}</code></dd>
         <dt>제출</dt><dd style="font-size:12px">${row.submitted_at ? new Date(row.submitted_at).toLocaleString('ko') : '-'}</dd>
         ${row.updated_at ? `<dt>수정</dt><dd style="font-size:12px">${new Date(row.updated_at).toLocaleString('ko')}</dd>` : ''}

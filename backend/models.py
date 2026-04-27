@@ -16,6 +16,16 @@ class Participant(BaseModel):
     position: str = ""
     rank: str = ""
     duty: str = ""
+    # 등록 출처: imported(엑셀 import) | self(공개 링크 자가등록)
+    source: str = "imported"
+    # 개인정보 동의 (자가등록 시 필수동의·선택동의 분리 기록)
+    consent_pi: bool = False
+    consent_pi_at: Optional[datetime] = None
+    consent_reward: bool = False
+    consent_reward_at: Optional[datetime] = None
+    # 사례품(모바일 쿠폰) 수령 정보 — 선택동의 시에만 채워짐
+    reward_name: str = ""
+    reward_phone: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -37,6 +47,26 @@ class ParticipantUpdate(BaseModel):
     position: Optional[str] = None
     rank: Optional[str] = None
     duty: Optional[str] = None
+    reward_name: Optional[str] = None
+    reward_phone: Optional[str] = None
+
+
+class SelfRegisterRequest(BaseModel):
+    """공개 단일 링크 자가등록 페이로드."""
+    name: str
+    email: str
+    org: str = ""                  # 시·도 / 시·군·구 명칭
+    category: str                  # "광역자치단체" | "기초자치단체"
+    dept: str = ""
+    team: str = ""
+    position: str = ""
+    rank: str = ""
+    duty: str = ""
+    phone: str = ""
+    consent_pi: bool                  # 필수
+    consent_reward: bool = False      # 선택 — true면 reward_* 필요
+    reward_name: str = ""
+    reward_phone: str = ""
 
 
 class ResponseSubmit(BaseModel):

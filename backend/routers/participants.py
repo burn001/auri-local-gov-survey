@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from models import CommentCreateRequest, CommentUpdateRequest, COMMENT_STATUSES
 from services.db import get_db
-from services.email_service import render_email, send_email
+from services.email_service import render_email, render_custom, send_email
 from services.admin_auth import verify_admin_token
 from config import get_settings
 import logging
@@ -109,8 +109,13 @@ async def list_responses(
             "submitted_at": 1,
             "updated_at": 1,
             "name": "$participant.name",
+            "email": "$participant.email",
             "org": "$participant.org",
             "category": "$participant.category",
+            "source": {"$ifNull": ["$participant.source", "imported"]},
+            "consent_reward": {"$ifNull": ["$participant.consent_reward", False]},
+            "reward_name": {"$ifNull": ["$participant.reward_name", ""]},
+            "reward_phone": {"$ifNull": ["$participant.reward_phone", ""]},
             "comment_count": {"$size": "$rc"},
         }},
     ]
@@ -183,6 +188,7 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
 async def list_participants(
     admin: dict = Depends(verify_admin_token),
     category: Optional[str] = None,
+    source: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
 ):
@@ -190,6 +196,11 @@ async def list_participants(
     match: dict = {}
     if category:
         match["category"] = category
+    if source == "self":
+        match["source"] = "self"
+    elif source == "imported":
+        # 과거 데이터(필드 부재)도 imported로 간주
+        match["$or"] = [{"source": "imported"}, {"source": {"$exists": False}}]
 
     pipeline = [
         {"$match": match},
@@ -225,6 +236,13 @@ class EmailSendRequest(BaseModel):
     tokens: list[str]
     subject: str = "지방자치단체 청사 관리 실태조사 참여 요청 (AURI)"
     type: str = "invite"  # invite | reminder | deadline | custom
+
+
+class EmailCustomSendRequest(BaseModel):
+    """관리자가 직접 작성한 제목·본문으로 발송. type은 항상 custom."""
+    tokens: list[str]
+    subject: str
+    body_html: str  # {{name}} {{org}} {{survey_url}} placeholder 사용 가능
 
 
 @router.post("/email/preview", response_class=HTMLResponse)
@@ -315,6 +333,118 @@ async def send_survey_emails(
             results["errors"].append({"token": token, "email": p["email"], "error": err_msg})
 
     return results
+
+
+@router.post("/email/custom-send")
+async def send_custom_emails(
+    body: EmailCustomSendRequest,
+    admin: dict = Depends(verify_admin_token),
+):
+    """자유 제목·본문을 다수 토큰에게 발송. 본문 내 {{name}} {{org}} {{survey_url}} 치환."""
+    s = get_settings()
+    if not s.GMAIL_USER or not s.GMAIL_APP_PASSWORD:
+        raise HTTPException(500, "Gmail 설정이 없습니다.")
+
+    subject = (body.subject or "").strip()
+    body_html = (body.body_html or "").strip()
+    if not subject:
+        raise HTTPException(400, "제목을 입력해 주십시오.")
+    if not body_html:
+        raise HTTPException(400, "본문을 입력해 주십시오.")
+    if not body.tokens:
+        raise HTTPException(400, "수신자가 없습니다.")
+
+    batch_id = uuid4().hex[:12]
+    db = get_db()
+    results = {
+        "batch_id": batch_id,
+        "type": "custom",
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+
+    for token in body.tokens:
+        p = await db.participants.find_one({"token": token})
+        if not p:
+            results["skipped"] += 1
+            continue
+
+        survey_url = f"{s.SURVEY_BASE_URL}/?token={token}"
+        html = render_custom(p.get("name", ""), p.get("org", ""), survey_url, body_html)
+        now = datetime.now(timezone.utc)
+
+        log_doc = {
+            "batch_id": batch_id,
+            "token": token,
+            "email": p["email"],
+            "name": p.get("name", ""),
+            "org": p.get("org", ""),
+            "category": p.get("category", ""),
+            "type": "custom",
+            "subject": subject,
+            "admin_email": admin.get("email", ""),
+            "admin_name": admin.get("name", ""),
+            "sent_at": now,
+        }
+
+        try:
+            send_email(p["email"], subject, html)
+            log_doc.update({"status": "sent", "error": ""})
+            await db.email_logs.insert_one(log_doc)
+            await db.participants.update_one(
+                {"token": token},
+                [{"$set": {
+                    "email_sent": True,
+                    "email_sent_at": now,
+                    "email_last_sent_at": now,
+                    "email_first_sent_at": {"$ifNull": ["$email_first_sent_at", now]},
+                    "email_sent_count": {"$add": [{"$ifNull": ["$email_sent_count", 0]}, 1]},
+                    "email_last_status": "sent",
+                    "email_last_type": "custom",
+                    "email_last_error": "",
+                }}],
+            )
+            results["sent"] += 1
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"Custom email failed for {p['email']}: {err_msg}")
+            log_doc.update({"status": "failed", "error": err_msg})
+            await db.email_logs.insert_one(log_doc)
+            await db.participants.update_one(
+                {"token": token},
+                {"$set": {
+                    "email_last_status": "failed",
+                    "email_last_attempt_at": now,
+                    "email_last_type": "custom",
+                    "email_last_error": err_msg,
+                }},
+            )
+            results["failed"] += 1
+            results["errors"].append({"token": token, "email": p["email"], "error": err_msg})
+
+    return results
+
+
+@router.post("/email/custom-preview", response_class=HTMLResponse)
+async def custom_email_preview(
+    body: EmailCustomSendRequest,
+    admin: dict = Depends(verify_admin_token),
+):
+    """자유 본문 미리보기 — 첫 토큰 기준 (없으면 SAMPLE)."""
+    s = get_settings()
+    name = "홍길동"
+    org = "예시 지방자치단체"
+    survey_url = f"{s.SURVEY_BASE_URL}/?token=SAMPLE_TOKEN"
+    if body.tokens:
+        db = get_db()
+        p = await db.participants.find_one({"token": body.tokens[0]})
+        if p:
+            name = p.get("name", "") or name
+            org = p.get("org", "") or org
+            survey_url = f"{s.SURVEY_BASE_URL}/?token={p['token']}"
+    return render_custom(name, org, survey_url, body.body_html or "")
 
 
 @router.get("/email/logs")

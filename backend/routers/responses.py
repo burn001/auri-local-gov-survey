@@ -5,13 +5,39 @@ from models import (
     ResponseSubmit,
     ResponseRecord,
     ParticipantUpdate,
+    SelfRegisterRequest,
     CommentCreateRequest,
     CommentUpdateRequest,
     COMMENT_STATUSES,
 )
 from services.db import get_db
+from services.token_service import generate_token
+from config import get_settings
 
 router = APIRouter(prefix="/api", tags=["responses"])
+
+ALLOWED_SELF_CATEGORIES = {"광역자치단체", "기초자치단체"}
+
+
+async def _require_reviewer(token: str) -> dict:
+    """token이 유효한 연구진 참가자인지 확인하고 participant doc 반환."""
+    db = get_db()
+    p = await db.participants.find_one({"token": token}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "유효하지 않은 토큰입니다.")
+    if p.get("category") != "연구진":
+        raise HTTPException(403, "연구진 전용 기능입니다.")
+    return p
+
+
+def _serialize_comment(doc: dict) -> dict:
+    """ObjectId 제거 + datetime ISO 변환."""
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    for k in ("created_at", "updated_at", "status_changed_at"):
+        v = out.get(k)
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+    return out
 
 
 async def _require_reviewer(token: str) -> dict:
@@ -57,11 +83,95 @@ async def verify_token(token: str):
         "position": participant.get("position", ""),
         "rank": participant.get("rank", ""),
         "duty": participant.get("duty", ""),
+        "source": participant.get("source", "imported"),
+        "consent_pi": bool(participant.get("consent_pi", False)),
+        "consent_reward": bool(participant.get("consent_reward", False)),
+        "reward_name": participant.get("reward_name", ""),
+        "reward_phone": participant.get("reward_phone", ""),
         "has_responded": has_submitted,
         "responses": existing.get("responses") if has_submitted else None,
         "comments": existing.get("comments") if existing else None,
         "submitted_at": existing.get("submitted_at").isoformat() if has_submitted else None,
         "updated_at": existing.get("updated_at").isoformat() if existing and existing.get("updated_at") else None,
+    }
+
+
+# ── 공개 자가등록 (No Auth) ──
+@router.post("/survey/register")
+async def self_register(body: SelfRegisterRequest, request: Request):
+    """공개 단일 링크에서 응답자가 직접 정보를 입력하고 토큰을 발급받는다.
+    - 필수동의(consent_pi)가 false면 거부
+    - 선택동의(consent_reward) true이면 reward_name/reward_phone 필요
+    - email 정규화 후 HMAC 토큰 생성 → 동일 이메일은 같은 토큰으로 idempotent
+      (사전 import된 이메일과 충돌 시 기존 레코드 보존, 동의/사례품 정보만 갱신)
+    """
+    s = get_settings()
+
+    name = (body.name or "").strip()
+    email = (body.email or "").strip().lower()
+    if not name:
+        raise HTTPException(400, "이름을 입력해 주십시오.")
+    if not email or "@" not in email or "." not in email:
+        raise HTTPException(400, "올바른 이메일을 입력해 주십시오.")
+    if not body.consent_pi:
+        raise HTTPException(400, "개인정보 수집·이용에 동의해 주셔야 참여하실 수 있습니다.")
+    if body.category not in ALLOWED_SELF_CATEGORIES:
+        raise HTTPException(400, "지자체 유형(광역/기초)을 선택해 주십시오.")
+    if body.consent_reward:
+        if not body.reward_name.strip() or not body.reward_phone.strip():
+            raise HTTPException(400, "사례품 수령 정보(이름·휴대폰)를 입력해 주십시오.")
+
+    token = generate_token(email, s.TOKEN_SECRET)
+    now = datetime.utcnow()
+    ip = request.client.host if request.client else ""
+    ua = request.headers.get("user-agent", "")
+
+    db = get_db()
+    existing = await db.participants.find_one({"token": token})
+
+    base_fields = {
+        "name": name,
+        "email": email,
+        "org": (body.org or "").strip(),
+        "category": body.category,
+        "dept": (body.dept or "").strip(),
+        "team": (body.team or "").strip(),
+        "position": (body.position or "").strip(),
+        "rank": (body.rank or "").strip(),
+        "duty": (body.duty or "").strip(),
+        "phone": (body.phone or "").strip(),
+        "consent_pi": True,
+        "consent_pi_at": now,
+        "consent_reward": bool(body.consent_reward),
+        "consent_reward_at": now if body.consent_reward else None,
+        "reward_name": (body.reward_name or "").strip() if body.consent_reward else "",
+        "reward_phone": (body.reward_phone or "").strip() if body.consent_reward else "",
+        "register_ip": ip,
+        "register_ua": ua,
+        "register_updated_at": now,
+    }
+
+    if existing:
+        # 기존 import 또는 자가등록 둘 다 — 정보 갱신만, source/created_at은 보존
+        base_fields["source"] = existing.get("source", "imported")
+        await db.participants.update_one(
+            {"token": token},
+            {"$set": base_fields},
+        )
+        status = "updated"
+    else:
+        base_fields.update({
+            "token": token,
+            "source": "self",
+            "created_at": now,
+        })
+        await db.participants.insert_one(base_fields)
+        status = "created"
+
+    return {
+        "status": status,
+        "token": token,
+        "survey_url": f"{s.SURVEY_BASE_URL}/?token={token}",
     }
 
 
@@ -276,6 +386,9 @@ async def update_participant(token: str, body: ParticipantUpdate, request: Reque
             "position": updated.get("position", ""),
             "rank": updated.get("rank", ""),
             "duty": updated.get("duty", ""),
+            "reward_name": updated.get("reward_name", ""),
+            "reward_phone": updated.get("reward_phone", ""),
+            "consent_reward": bool(updated.get("consent_reward", False)),
         },
     }
 
