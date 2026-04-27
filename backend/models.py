@@ -52,9 +52,13 @@ class ParticipantUpdate(BaseModel):
 
 
 class SelfRegisterRequest(BaseModel):
-    """공개 단일 링크 자가등록 페이로드."""
-    name: str
-    email: str
+    """공개 단일 링크 자가등록 페이로드.
+
+    필수: email(완료 메일 발송용) + 분류 정보(category/org). 분류 정보는 통계법 §33 처리되어
+          개인정보 동의 대상이 아님.
+    선택: 이름·휴대폰 — 사례품 발송 동의 시에만 수집.
+    """
+    email: str                     # 필수 — 응답 완료 안내 메일 발송용
     org: str = ""                  # 시·도 / 시·군·구 명칭
     category: str                  # "광역자치단체" | "기초자치단체"
     dept: str = ""
@@ -62,11 +66,10 @@ class SelfRegisterRequest(BaseModel):
     position: str = ""
     rank: str = ""
     duty: str = ""
-    phone: str = ""
-    consent_pi: bool                  # 필수
-    consent_reward: bool = False      # 선택 — true면 reward_* 필요
-    reward_name: str = ""
-    reward_phone: str = ""
+    consent_pi: bool                  # 필수동의 — 이메일 수집·이용
+    consent_reward: bool = False      # 선택동의 — true면 reward_name/reward_phone 필요
+    reward_name: str = ""             # 사례품 동의 시 수령자명
+    reward_phone: str = ""            # 사례품 동의 시 휴대폰 번호
 
 
 class ResponseSubmit(BaseModel):

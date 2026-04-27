@@ -42,6 +42,7 @@ export class SurveyEngine {
     const urlParams = new URLSearchParams(window.location.search);
     this.token = urlParams.get('token');
     this.reviewMode = urlParams.get('review') === '1';
+    this.justRegistered = urlParams.get('just_registered') === '1';
     this.participant = null;
     this.submitted = false;
     this.submittedAt = null;
@@ -505,8 +506,8 @@ export class SurveyEngine {
 
   emptyRegisterDraft() {
     return {
-      name: '', email: '', org: '', category: '',
-      dept: '', team: '', position: '', rank: '', duty: '', phone: '',
+      email: '', org: '', category: '',
+      dept: '', team: '', position: '', rank: '', duty: '',
       consent_pi: false, consent_reward: false,
       reward_name: '', reward_phone: '',
     };
@@ -642,33 +643,36 @@ export class SurveyEngine {
           <h2>개인정보 수집·이용 동의</h2>
           <p class="register-hint">「개인정보 보호법」 제15조에 따라 아래 사항을 안내드립니다.</p>
 
+          <div class="consent-info">
+            <h3>ⓘ 본 설문은 익명으로 진행됩니다 — 통계 처리 안내 (동의 불요)</h3>
+            <p>
+              지자체 유형(광역/기초)·소속·부서·팀·직위·직급·담당업무 등 <strong>분류 정보</strong>와
+              <strong>설문 응답 내용</strong>은 「<strong>통계법」 제33조(비밀의 보호)</strong>에 따라 통계 처리되어
+              <strong>개인을 식별할 수 없는 형태</strong>로만 분석·공표됩니다.
+              연구 결과의 보고서·논문 등에서 개별 응답자 또는 기관의 답변이 그대로 노출되지 않으며,
+              위 분류 정보와 응답 내용은 별도의 동의 절차를 거치지 않습니다.
+            </p>
+          </div>
+
           <div class="consent-block">
-            <h3>① 필수동의 — 응답자 식별 목적 (개인정보 최소 수집)</h3>
+            <h3>① 필수동의 — 응답 완료 안내 메일 발송 목적</h3>
             <table class="consent-table">
               <tbody>
                 <tr><th>수집 항목</th>
-                  <td><strong>이름, 이메일</strong></td></tr>
+                  <td><strong>이메일 주소</strong></td></tr>
                 <tr><th>수집·이용 목적</th>
-                  <td>중복 응답 방지, 응답 완료 안내 메일 발송, 응답 수정 요청 시 본인 확인</td></tr>
+                  <td>설문 응답 완료 안내 메일 발송 (본인 응답 확인 링크 포함).
+                      <strong>응답 분석·통계 처리 단계에서는 사용하지 않으며, 개인 식별 자료로 활용되지 않습니다.</strong></td></tr>
                 <tr><th>보유·이용 기간</th>
-                  <td>연구 종료 후 즉시 파기 (사례품 지급 분쟁 발생 시 6개월까지 한정 보존)</td></tr>
+                  <td>완료 메일 발송 후 즉시 파기 (응답 수정·재발송 요청 처리 시 연구 종료 시점까지 한정 보존)</td></tr>
                 <tr><th>거부 권리</th>
                   <td>동의를 거부할 수 있으며, 거부 시 본 설문에 참여하실 수 없습니다.</td></tr>
               </tbody>
             </table>
             <label class="consent-check">
               <input type="checkbox" id="reg-consent-pi" ${d.consent_pi ? 'checked' : ''}>
-              <span>위 사항을 충분히 이해하였으며, 개인정보(이름·이메일) 수집·이용에 <strong>동의합니다(필수).</strong></span>
+              <span>위 사항을 충분히 이해하였으며, 응답 완료 안내 메일 발송 목적의 이메일 수집·이용에 <strong>동의합니다(필수).</strong></span>
             </label>
-          </div>
-
-          <div class="consent-info">
-            <h3>ⓘ 안내 — 통계 처리 항목 (별도 동의 불요)</h3>
-            <p>
-              소속(시·도/시·군·구)·부서·팀·직위·직급·담당업무·사무실 연락처와 설문 응답 내용은
-              「<strong>통계법」 제33조(비밀의 보호)</strong>에 따라 통계 처리되어 <strong>개인을 식별할 수 없는 형태</strong>로만 분석·공표됩니다.
-              따라서 별도의 동의 절차를 거치지 않으며, 보고서·논문 등에서 개별 응답자 또는 기관의 답변이 그대로 노출되지 않습니다.
-            </p>
           </div>
 
           <div class="consent-block">
@@ -676,18 +680,18 @@ export class SurveyEngine {
             <table class="consent-table">
               <tbody>
                 <tr><th>수집 항목</th>
-                  <td>수령자명, 휴대폰 번호</td></tr>
+                  <td>이름, 휴대폰 번호</td></tr>
                 <tr><th>수집·이용 목적</th>
-                  <td>설문 참여 사례품(모바일 쿠폰) 발송</td></tr>
+                  <td>설문 참여 사례품(모바일 쿠폰) 발송. <strong>분석·통계 처리에는 사용하지 않습니다.</strong></td></tr>
                 <tr><th>보유·이용 기간</th>
-                  <td>발송 완료 후 즉시 파기 (지급 분쟁 시 6개월까지 보존)</td></tr>
+                  <td>발송 완료 후 즉시 파기 (지급 분쟁 시 6개월까지 한정 보존)</td></tr>
                 <tr><th>거부 권리</th>
                   <td>동의를 거부할 수 있으며, 거부 시 사례품 발송이 불가합니다. (설문 참여는 가능)</td></tr>
               </tbody>
             </table>
             <label class="consent-check">
               <input type="checkbox" id="reg-consent-reward" ${d.consent_reward ? 'checked' : ''}>
-              <span>사례품 발송을 위한 휴대폰 번호 수집·이용에 <strong>동의합니다(선택).</strong></span>
+              <span>사례품 발송을 위한 이름·휴대폰 번호 수집·이용에 <strong>동의합니다(선택).</strong></span>
             </label>
           </div>
 
@@ -736,13 +740,13 @@ export class SurveyEngine {
       ? '<span class="register-submitting">등록 중…</span>' : '';
 
     const rewardBlock = d.consent_reward ? `
-      <div class="register-section">
+      <div class="register-section reward-section">
         <h3>🎁 사례품 수령 정보 <span class="required">(선택동의 시 필수)</span></h3>
-        <p class="register-hint">설문 완료 후 입력하신 휴대폰 번호로 모바일 쿠폰이 발송됩니다.</p>
+        <p class="register-hint">사례품 발송 외 다른 목적으로는 사용되지 않습니다.</p>
         <div class="register-grid">
           <label>
-            <span>수령자명 *</span>
-            <input type="text" id="reg-reward-name" value="${this.escape(d.reward_name)}" placeholder="응답자 본인" />
+            <span>이름 (수령자명) *</span>
+            <input type="text" id="reg-reward-name" value="${this.escape(d.reward_name)}" placeholder="응답자 본인 또는 수령자" />
           </label>
           <label>
             <span>휴대폰 번호 *</span>
@@ -752,8 +756,8 @@ export class SurveyEngine {
       </div>
     ` : `
       <div class="register-skip-reward">
-        사례품 발송 동의를 하지 않으셨으므로 휴대폰 번호는 수집하지 않습니다.
-        (이전 단계에서 동의를 변경하실 수 있습니다.)
+        사례품 발송 동의를 하지 않으셨으므로 이름·휴대폰 번호는 수집하지 않습니다.
+        (이전 단계에서 동의를 추가하실 수 있습니다.)
       </div>
     `;
 
@@ -767,29 +771,26 @@ export class SurveyEngine {
 
         <div class="register-card">
           <h2>응답자 정보 입력</h2>
-          <p class="register-hint">아래 정보는 설문 응답 식별과 통계 분석에만 사용됩니다.
-             <span class="required">*</span> 표시는 필수 항목입니다.</p>
+          <p class="register-hint">
+            <span class="required">*</span> 표시는 필수 항목입니다.
+            응답 분석에는 <strong>분류 정보(지자체 유형·소속·담당업무 등)</strong>만 활용되며,
+            이메일은 응답 완료 안내 메일 발송에만 사용됩니다.
+          </p>
 
           <div class="register-section">
-            <h3>① 응답자 본인</h3>
+            <h3>① 응답 완료 안내 받을 이메일 <span class="register-section-tag">(필수)</span></h3>
+            <p class="register-hint">제출 직후 이 주소로 응답 확인 링크가 자동 발송됩니다. 분석·통계 처리에는 사용되지 않습니다.</p>
             <div class="register-grid">
-              <label>
-                <span>이름 *</span>
-                <input type="text" id="reg-name" value="${this.escape(d.name)}" />
-              </label>
-              <label>
-                <span>이메일 * <small>(설문 식별자, 정확히 입력해 주세요)</small></span>
+              <label class="full">
+                <span>이메일 *</span>
                 <input type="email" id="reg-email" value="${this.escape(d.email)}" placeholder="example@example.go.kr" />
-              </label>
-              <label>
-                <span>사무실 번호</span>
-                <input type="tel" id="reg-phone" value="${this.escape(d.phone)}" placeholder="02-0000-0000" />
               </label>
             </div>
           </div>
 
           <div class="register-section">
-            <h3>② 소속 기관</h3>
+            <h3>② 소속 기관 및 담당업무 <span class="register-section-tag">(분류 통계용 — 동의 불요)</span></h3>
+            <p class="register-hint">통계 분석을 위한 분류 정보입니다. 보고서·논문에서 개별 응답자나 기관이 그대로 노출되지 않습니다.</p>
             <div class="register-grid">
               <label class="full">
                 <span>지자체 유형 *</span>
@@ -857,9 +858,7 @@ export class SurveyEngine {
         this.saveRegisterDraft();
       });
     };
-    bind('reg-name', 'name');
     bind('reg-email', 'email');
-    bind('reg-phone', 'phone');
     bind('reg-org', 'org');
     bind('reg-dept', 'dept');
     bind('reg-team', 'team');
@@ -891,9 +890,9 @@ export class SurveyEngine {
   async submitRegistration() {
     const d = this.regDraft;
     const errors = [];
-    if (!(d.name || '').trim()) errors.push('이름을 입력해 주십시오.');
     const email = (d.email || '').trim();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('올바른 이메일을 입력해 주십시오.');
+    if (!d.consent_pi) errors.push('이메일 수집·이용에 동의해 주십시오 (필수).');
     if (d.category !== '광역자치단체' && d.category !== '기초자치단체') errors.push('지자체 유형(광역/기초)을 선택해 주십시오.');
     if (!(d.org || '').trim()) errors.push('지자체명을 입력해 주십시오.');
     if (d.consent_reward) {
@@ -914,7 +913,6 @@ export class SurveyEngine {
 
     try {
       const payload = {
-        name: d.name.trim(),
         email: email,
         org: (d.org || '').trim(),
         category: d.category,
@@ -923,7 +921,6 @@ export class SurveyEngine {
         position: (d.position || '').trim(),
         rank: (d.rank || '').trim(),
         duty: (d.duty || '').trim(),
-        phone: (d.phone || '').trim(),
         consent_pi: !!d.consent_pi,
         consent_reward: !!d.consent_reward,
         reward_name: d.consent_reward ? (d.reward_name || '').trim() : '',
@@ -940,9 +937,11 @@ export class SurveyEngine {
       }
       const data = await res.json();
       this.clearRegisterDraft();
-      // 발급된 토큰으로 이동 — 페이지 reload하여 토큰 인증 흐름 진입
+      // 발급된 토큰으로 이동 — 페이지 reload하여 토큰 인증 흐름 진입.
+      // just_registered=1 플래그로 인트로에 "이 URL 북마크 안내" 배너 한 번 표시.
       const url = new URL(window.location.href);
       url.searchParams.set('token', data.token);
+      url.searchParams.set('just_registered', '1');
       window.location.href = url.toString();
     } catch (e) {
       this.regError = e.message || '등록 중 오류가 발생했습니다. 잠시 후 다시 시도해 주십시오.';
@@ -1375,6 +1374,19 @@ export class SurveyEngine {
       ? '응답 수정 시작하기'
       : '설문 시작하기';
 
+    // 등록 직후 한 번 표시되는 토큰 URL 북마크 안내. 닫으면 just_registered 파라미터 제거.
+    const bookmarkBanner = this.justRegistered ? `
+      <div class="bookmark-banner">
+        <div class="bookmark-banner-icon">🔖</div>
+        <div class="bookmark-banner-body">
+          <strong>이 페이지의 URL을 북마크해 주세요.</strong>
+          <p>응답 작성 도중 자리를 비우셨다가 다시 돌아오실 때 사용하시는 <strong>고유 응답 링크</strong>입니다.
+             제출 직후 입력하신 이메일로 응답 확인 링크가 자동 발송됩니다.</p>
+          <button class="bookmark-banner-close" id="btn-bookmark-close" aria-label="닫기">×</button>
+        </div>
+      </div>
+    ` : '';
+
     this.container.innerHTML = `
       ${statusBar}
       <div class="progress-bar-wrap"><div class="progress-bar-inner">
@@ -1387,6 +1399,8 @@ export class SurveyEngine {
           <h1>${m.title}</h1>
           <div class="subtitle">${m.subtitle}</div>
         </div>
+
+        ${bookmarkBanner}
 
         ${participantCard}
 
@@ -1416,6 +1430,13 @@ export class SurveyEngine {
     this.bindParticipantEvents();
     this.container.querySelector('#btn-start')?.addEventListener('click', () => {
       this.currentPage = 1;
+      this.render();
+    });
+    this.container.querySelector('#btn-bookmark-close')?.addEventListener('click', () => {
+      this.justRegistered = false;
+      const url = new URL(window.location.href);
+      url.searchParams.delete('just_registered');
+      window.history.replaceState({}, '', url.toString());
       this.render();
     });
   }
