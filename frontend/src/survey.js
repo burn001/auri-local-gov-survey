@@ -1633,13 +1633,13 @@ export class SurveyEngine {
     let body = '';
     for (const r of q.rows) {
       body += `<tr data-row="${r.id}">`;
-      body += `<th class="row-label">${r.label}</th>`;
+      body += `<th class="row-label" scope="row">${r.label}</th>`;
       for (const c of q.columns) {
-        body += `<td><input type="number" class="cell-input" data-q="${q.id}" data-r="${r.id}" data-c="${c.id}" step="1" min="0" placeholder="0" /></td>`;
+        body += `<td data-label="${c.label}"><input type="number" class="cell-input" data-q="${q.id}" data-r="${r.id}" data-c="${c.id}" inputmode="numeric" step="1" min="0" placeholder="0" /></td>`;
       }
-      if (q.showRowSum) body += `<td class="cell-sum" data-r="${r.id}">0</td>`;
+      if (q.showRowSum) body += `<td class="cell-sum" data-label="합계" data-r="${r.id}">0</td>`;
       if (q.allowUnknownPerRow) {
-        body += `<td class="cell-unknown"><input type="checkbox" class="row-unknown-toggle" data-q="${q.id}" data-r="${r.id}" /></td>`;
+        body += `<td class="cell-unknown" data-label="모름/해당없음"><label class="row-unknown-label"><input type="checkbox" class="row-unknown-toggle" data-q="${q.id}" data-r="${r.id}" /><span class="row-unknown-text">모름/해당없음</span></label></td>`;
       }
       body += '</tr>';
     }

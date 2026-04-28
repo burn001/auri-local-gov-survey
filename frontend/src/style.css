@@ -613,8 +613,118 @@ body {
 .number-table .cell-unknown input[type="checkbox"] {
   cursor: pointer;
 }
+.number-table .row-unknown-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.number-table .row-unknown-text {
+  display: none;
+}
 .number-table-wrap.has-error {
   border-color: var(--c-error, #dc2626);
+}
+
+/* ── Number Table — 모바일 카드 레이아웃 ──
+   협소한 화면에서 6컬럼 가로 스크롤 + 셀당 너비 부족으로 입력이 사실상 불가했던 문제 해소.
+   각 연도(tr)를 카드처럼 표시하고 컬럼 라벨은 td::before(data-label)로 노출. */
+@media (max-width: 600px) {
+  .number-table-wrap {
+    padding: 12px;
+    overflow-x: visible;
+  }
+  .number-table {
+    display: block;
+  }
+  .number-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .number-table tbody,
+  .number-table tr,
+  .number-table th,
+  .number-table td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .number-table tr {
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: #fff;
+  }
+  .number-table .row-label {
+    border: 0;
+    border-bottom: 1px solid var(--c-border);
+    padding: 4px 0 8px;
+    margin-bottom: 8px;
+    text-align: left;
+    background: transparent;
+    font-size: 14px;
+  }
+  .number-table tbody td {
+    border: 0;
+    padding: 8px 0;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+  }
+  .number-table tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 13px;
+    color: var(--c-text-secondary);
+    font-weight: 500;
+  }
+  .number-table tbody td:not(:last-child) {
+    border-bottom: 1px dashed #eee;
+  }
+  .number-table .cell-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    border: 1px solid var(--c-border);
+    background: #fff;
+    padding: 10px 12px;
+    font-size: 16px; /* iOS 자동 줌 방지 */
+    border-radius: 6px;
+  }
+  .number-table .cell-sum {
+    background: transparent;
+    min-width: 0;
+    text-align: right;
+    color: #0369a1;
+  }
+  .number-table .cell-unknown {
+    background: transparent;
+  }
+  .number-table .cell-unknown::before {
+    display: none;
+  }
+  .number-table .row-unknown-label {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 6px 0;
+    font-size: 14px;
+    color: var(--c-text-secondary);
+  }
+  .number-table .row-unknown-text {
+    display: inline;
+  }
+  .number-table .row-unknown-toggle {
+    width: 18px;
+    height: 18px;
+  }
 }
 
 /* ── Reviewer Thread (연구진 검토 코멘트 스레드) ── */
