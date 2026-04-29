@@ -20,6 +20,7 @@ const GATE = {
   READ_ONLY: 'read_only',
   OPEN: 'open',
   REGISTER: 'register',  // 토큰 없는 공개 진입 — 랜딩/동의/정보입력 단계 진행
+  RECOVER: 'recover',    // 등록자가 토큰 분실 시 — 본인 메일로 링크 재발송 폼
   REVIEW: 'review',      // ?review=1 진입 — 본인 응답 읽기전용 확인
   CLOSED: 'closed',      // 250부 limit 도달 — 모든 신규/이어작성/리뷰 차단
 };
@@ -56,6 +57,11 @@ export class SurveyEngine {
     this.regDraft = this.loadRegisterDraft();
     this.regError = '';
     this.regSubmitting = false;
+    // 토큰 재발송(GATE.RECOVER) 상태
+    this.recoverEmail = '';
+    this.recoverError = '';
+    this.recoverSubmitting = false;
+    this.recoverSent = false;
     this.responses = this.loadResponses();
     this.threads = {};                // { qid: [comment, ...] } — fetched from server
     this.threadsLoading = false;
@@ -559,6 +565,10 @@ export class SurveyEngine {
       this.renderRegister();
       return;
     }
+    if (this.gate === GATE.RECOVER) {
+      this.renderRecover();
+      return;
+    }
     if (this.gate === GATE.RESUBMIT_CHOICE) {
       this.renderResubmitChoice();
       return;
@@ -674,11 +684,24 @@ export class SurveyEngine {
           </div>
 
           <button class="btn-start" id="btn-reg-start">참여하기 →</button>
+
+          <p style="text-align:center;margin:16px 0 0;font-size:13px;color:var(--c-text-secondary);line-height:1.7">
+            이미 등록하셨는데 메일을 못 받으셨나요?
+            <a href="#" id="btn-reg-recover" style="color:#2563eb;text-decoration:underline;margin-left:4px">토큰 재발송 받기</a>
+          </p>
         </div>
       </div>
     `;
     this.container.querySelector('#btn-reg-start')?.addEventListener('click', () => {
       this.regStep = REG_STEP.CONSENT;
+      this.render();
+    });
+    this.container.querySelector('#btn-reg-recover')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.recoverEmail = (this.regDraft.email || '').trim();
+      this.recoverError = '';
+      this.recoverSent = false;
+      this.gate = GATE.RECOVER;
       this.render();
     });
   }
@@ -993,6 +1016,18 @@ export class SurveyEngine {
         this.render();
         return;
       }
+      if (res.status === 409) {
+        // 동일 email 이미 등록 — 토큰 재발송 페이지로 점프.
+        const err = await res.json().catch(() => ({}));
+        this.recoverEmail = email;
+        this.recoverError = '';
+        this.recoverSent = false;
+        this.regSubmitting = false;
+        this.gate = GATE.RECOVER;
+        this.regError = err.detail || '';
+        this.render();
+        return;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `등록 실패 (${res.status})`);
@@ -1010,6 +1045,143 @@ export class SurveyEngine {
       this.regSubmitting = false;
       this.render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  // ── Recover (토큰 재발송 폼) ──
+  renderRecover() {
+    const m = SURVEY_META;
+    const errHtml = this.recoverError ? `<p class="register-error">${this.escape(this.recoverError)}</p>` : '';
+    const noticeHtml = this.regError ? `<p class="register-hint" style="color:#92400e;background:#fef3c7;padding:10px 12px;border-radius:6px;margin:0 0 12px;line-height:1.6">${this.escape(this.regError)}</p>` : '';
+
+    if (this.recoverSent) {
+      this.container.innerHTML = `
+        <div class="survey-container">
+          <div class="register-landing">
+            <div class="register-institution">${m.institution}</div>
+            <h1 class="register-title">메일을 발송했습니다</h1>
+            <div class="register-card" style="text-align:center;padding:32px 24px">
+              <p style="font-size:15px;line-height:1.8;margin:0 0 12px">
+                입력하신 이메일이 <strong>등록된 응답자</strong>인 경우,<br>
+                해당 메일 주소로 본인 토큰 링크를 재발송했습니다.
+              </p>
+              <p style="font-size:13px;color:var(--c-text-secondary);margin:0;line-height:1.7">
+                메일이 도착하지 않으면 스팸함을 확인해 주시거나, 잠시 후 다시 시도해 주십시오.<br>
+                여러 차례 시도해도 메일이 오지 않는다면 담당자에게 문의해 주십시오.
+              </p>
+              <div style="margin-top:24px">
+                <button class="btn btn-prev" id="btn-recover-back">자가등록 화면으로</button>
+              </div>
+            </div>
+            <div class="register-meta">
+              <dl>
+                <dt>조사기관</dt><dd>${m.institution}</dd>
+                <dt>연구책임</dt><dd>${m.researcher}</dd>
+                <dt>문의</dt><dd>${m.contact}</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+      `;
+      this.container.querySelector('#btn-recover-back')?.addEventListener('click', () => {
+        this.recoverSent = false;
+        this.recoverError = '';
+        this.regError = '';
+        this.regStep = REG_STEP.LANDING;
+        this.gate = GATE.REGISTER;
+        this.render();
+      });
+      return;
+    }
+
+    const submitting = this.recoverSubmitting ? '<span class="register-submitting">발송 중…</span>' : '';
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="register-landing">
+          <div class="register-institution">${m.institution}</div>
+          <h1 class="register-title">토큰 재발송 받기</h1>
+          <div class="register-subtitle">등록 시 사용하신 이메일로 본인 토큰 링크를 다시 보내드립니다.</div>
+
+          <div class="register-card">
+            ${noticeHtml}
+            ${errHtml}
+            <div class="register-section">
+              <label class="register-label">이메일 <span class="register-req">*</span></label>
+              <p class="register-hint">자가등록 시 입력한 이메일과 동일해야 합니다.</p>
+              <input id="rec-email" type="email" class="register-input" placeholder="example@auri.re.kr"
+                     value="${this.escape(this.recoverEmail || '')}" autocomplete="email">
+            </div>
+            <p class="register-hint" style="margin:12px 0 0;line-height:1.6">
+              보안을 위해 입력하신 이메일이 등록되지 않은 경우에도 동일한 안내 메시지가 표시됩니다.
+            </p>
+          </div>
+
+          <div class="register-actions">
+            <button class="btn btn-next" id="btn-rec-submit" ${this.recoverSubmitting ? 'disabled' : ''}>
+              본인 메일로 링크 받기
+            </button>
+            ${submitting}
+          </div>
+
+          <p style="text-align:center;margin:16px 0 0;font-size:13px;color:var(--c-text-secondary)">
+            <a href="#" id="btn-rec-back" style="color:#2563eb;text-decoration:underline">← 자가등록 화면으로 돌아가기</a>
+          </p>
+
+          <div class="register-meta">
+            <dl>
+              <dt>조사기관</dt><dd>${m.institution}</dd>
+              <dt>연구책임</dt><dd>${m.researcher}</dd>
+              <dt>문의</dt><dd>${m.contact}</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    `;
+    this.container.querySelector('#rec-email')?.addEventListener('input', (e) => {
+      this.recoverEmail = e.target.value;
+    });
+    this.container.querySelector('#btn-rec-submit')?.addEventListener('click', () => {
+      this.submitRecovery();
+    });
+    this.container.querySelector('#btn-rec-back')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.recoverError = '';
+      this.regError = '';
+      this.regStep = REG_STEP.LANDING;
+      this.gate = GATE.REGISTER;
+      this.render();
+    });
+  }
+
+  async submitRecovery() {
+    const email = (this.recoverEmail || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      this.recoverError = '올바른 이메일을 입력해 주십시오.';
+      this.render();
+      return;
+    }
+    this.recoverError = '';
+    this.recoverSubmitting = true;
+    this.render();
+
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/recover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `재발송 요청 실패 (${res.status})`);
+      }
+      this.recoverSubmitting = false;
+      this.recoverSent = true;
+      this.regError = '';
+      this.render();
+    } catch (e) {
+      this.recoverError = e.message || '재발송 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해 주십시오.';
+      this.recoverSubmitting = false;
+      this.render();
     }
   }
 

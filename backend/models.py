@@ -69,7 +69,12 @@ class SelfRegisterRequest(BaseModel):
     consent_pi: bool                  # 필수동의 — 이메일 수집·이용
     consent_reward: bool = False      # 선택동의 — true면 reward_name/reward_phone 필요
     reward_name: str = ""             # 사례품 동의 시 수령자명
-    reward_phone: str = ""            # 사례품 동의 시 휴대폰 번호
+    reward_phone: str = ""             # 사례품 동의 시 휴대폰 번호
+
+
+class RecoverRequest(BaseModel):
+    """기존 자가등록자가 토큰 링크를 분실한 경우 — email로 본인 토큰 링크 재발송."""
+    email: str
 
 
 class ResponseSubmit(BaseModel):
