@@ -379,8 +379,13 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     existing = await db.participants.find_one({"email": email})
 
     # 응답 완료자·self 기등록자는 차단 — 분실 시 /recover.
+    # 응답 완료 여부는 participants에 필드가 없으므로 responses 컬렉션을 직접 조회.
     if existing:
-        if existing.get("responded"):
+        existing_resp = await db.responses.find_one(
+            {"token": existing["token"], "submitted_at": {"$ne": None}},
+            {"_id": 1},
+        )
+        if existing_resp:
             raise HTTPException(
                 409,
                 "이 이메일로 이미 응답을 제출하셨습니다. 응답 확인·수정은 '토큰 재발송'을 요청해 메일의 리뷰 링크로 접속해 주십시오.",
