@@ -21,6 +21,28 @@ router = APIRouter(prefix="/api", tags=["responses"])
 
 ALLOWED_SELF_CATEGORIES = {"광역자치단체", "기초자치단체"}
 
+# 완료 응답 limit — 연구진(category=연구진) 제외, self+imported 합산
+# 도달 시 신규 자가등록·신규 제출·기등록자 제출·리뷰 접근 모두 차단
+SURVEY_LIMIT = 250
+
+
+async def _get_completed_count(db) -> int:
+    """category=연구진을 제외한 submitted 응답 수."""
+    reviewer_tokens = [
+        p["token"]
+        async for p in db.participants.find(
+            {"category": "연구진"}, {"token": 1, "_id": 0}
+        )
+    ]
+    return await db.responses.count_documents({
+        "submitted_at": {"$ne": None},
+        "token": {"$nin": reviewer_tokens},
+    })
+
+
+async def _is_survey_closed(db) -> bool:
+    return (await _get_completed_count(db)) >= SURVEY_LIMIT
+
 
 async def _send_completion_email(participant: dict, token: str) -> None:
     """응답 제출 직후 자동 발송. 실패해도 응답 처리는 영향받지 않음."""
@@ -107,12 +129,31 @@ def _serialize_comment(doc: dict) -> dict:
     return out
 
 
+@router.get("/survey/status")
+async def survey_status():
+    """공개 — 설문 진행 상황 (마감 여부·완료 수·limit). 인트로 마감 배너용."""
+    db = get_db()
+    completed = await _get_completed_count(db)
+    return {
+        "completed": completed,
+        "limit": SURVEY_LIMIT,
+        "is_closed": completed >= SURVEY_LIMIT,
+    }
+
+
 @router.get("/survey/{token}")
 async def verify_token(token: str):
     db = get_db()
     participant = await db.participants.find_one({"token": token}, {"_id": 0})
     if not participant:
         raise HTTPException(404, "유효하지 않은 설문 링크입니다.")
+
+    # 마감 후에는 신규 진입·이어작성·리뷰 모두 차단 (연구진 토큰은 예외)
+    if participant.get("category") != "연구진" and await _is_survey_closed(db):
+        raise HTTPException(
+            410,
+            f"설문이 마감되었습니다. (목표 {SURVEY_LIMIT}부 도달) 참여해 주셔서 감사합니다.",
+        )
 
     existing = await db.responses.find_one({"token": token}, {"_id": 0})
     has_submitted = bool(existing and existing.get("submitted_at"))
@@ -179,6 +220,13 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     db = get_db()
     # 동일 이메일이 이미 등록되어 있으면 그 토큰 사용 (이어 작성용)
     existing = await db.participants.find_one({"email": email})
+
+    # 신규 자가등록은 마감 시 차단 (이미 등록된 사람의 정보 갱신은 허용 — 연구진/기등록자)
+    if not existing and await _is_survey_closed(db):
+        raise HTTPException(
+            410,
+            f"설문이 마감되었습니다. (목표 {SURVEY_LIMIT}부 도달) 참여해 주셔서 감사합니다.",
+        )
 
     # 사례품 동의 시 입력한 reward_name이 곧 응답자 이름. 미동의 시에는 익명 응답으로 빈 문자열.
     name = (body.reward_name or "").strip() if body.consent_reward else ""
@@ -451,6 +499,13 @@ async def submit_response(body: ResponseSubmit, request: Request):
     participant = await db.participants.find_one({"token": body.token})
     if not participant:
         raise HTTPException(404, "유효하지 않은 토큰입니다.")
+
+    # 마감 후 신규 제출·기제출 수정 모두 차단 (연구진 토큰은 예외)
+    if participant.get("category") != "연구진" and await _is_survey_closed(db):
+        raise HTTPException(
+            410,
+            f"설문이 마감되었습니다. (목표 {SURVEY_LIMIT}부 도달) 참여해 주셔서 감사합니다.",
+        )
 
     now = datetime.utcnow()
     ip = request.client.host if request.client else ""

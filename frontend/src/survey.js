@@ -21,7 +21,10 @@ const GATE = {
   OPEN: 'open',
   REGISTER: 'register',  // 토큰 없는 공개 진입 — 랜딩/동의/정보입력 단계 진행
   REVIEW: 'review',      // ?review=1 진입 — 본인 응답 읽기전용 확인
+  CLOSED: 'closed',      // 250부 limit 도달 — 모든 신규/이어작성/리뷰 차단
 };
+
+const SURVEY_LIMIT = 250;
 
 const REG_STEP = {
   LANDING: 'landing',
@@ -66,6 +69,7 @@ export class SurveyEngine {
     this.visibleSections = [];
     this.editingParticipant = false;
     this.participantFormError = '';
+    this.surveyStatus = null;
 
     if (this.token) {
       this.verifyToken().then(async () => {
@@ -75,13 +79,27 @@ export class SurveyEngine {
         this.render();
       });
     } else {
-      this.render();
+      this.fetchSurveyStatus().finally(() => this.render());
     }
+  }
+
+  async fetchSurveyStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/api/survey/status`);
+      if (!res.ok) return;
+      const data = await res.json();
+      this.surveyStatus = data;
+      if (data.is_closed) this.gate = GATE.CLOSED;
+    } catch {}
   }
 
   async verifyToken() {
     try {
       const res = await fetch(`${API_BASE}/api/survey/${this.token}`);
+      if (res.status === 410) {
+        this.gate = GATE.CLOSED;
+        return;
+      }
       if (!res.ok) {
         this.gate = GATE.DENIED;
         return;
@@ -529,6 +547,10 @@ export class SurveyEngine {
       this.renderLoading();
       return;
     }
+    if (this.gate === GATE.CLOSED) {
+      this.renderClosed();
+      return;
+    }
     if (this.gate === GATE.DENIED) {
       this.renderAccessDenied();
       return;
@@ -555,6 +577,39 @@ export class SurveyEngine {
       this.renderSection(this.visibleSections[this.currentPage - 1]);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ── Closed (limit 도달) ──
+  renderClosed() {
+    const m = SURVEY_META;
+    const completed = this.surveyStatus?.completed ?? SURVEY_LIMIT;
+    this.container.innerHTML = `
+      <div class="survey-container">
+        <div class="register-landing">
+          <div class="register-institution">${m.institution}</div>
+          <h1 class="register-title">설문이 마감되었습니다</h1>
+          <div class="register-card" style="text-align:center;padding:40px 24px">
+            <p style="font-size:16px;line-height:1.8;margin:0 0 12px">
+              목표 응답 <strong>${SURVEY_LIMIT}부</strong>가 모두 채워져 추가 응답을 받지 않습니다.
+            </p>
+            <p style="color:var(--c-text-secondary);margin:0 0 16px">
+              현재 완료 응답: <strong>${completed}부</strong>
+            </p>
+            <p style="font-size:15px;color:var(--c-text-secondary);margin:0">
+              본 조사에 관심 가져 주셔서 진심으로 감사드립니다.<br>
+              결과 활용 및 후속 안내는 추후 별도 공지를 통해 알려드리겠습니다.
+            </p>
+          </div>
+          <div class="register-meta">
+            <dl>
+              <dt>조사기관</dt><dd>${m.institution}</dd>
+              <dt>연구책임</dt><dd>${m.researcher}</dd>
+              <dt>문의</dt><dd>${m.contact}</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   // ── Loading ──
@@ -599,13 +654,14 @@ export class SurveyEngine {
               <li>응답 대상: 전국 광역·기초 지방자치단체 <strong>청사 관리·공유재산 담당자</strong></li>
               <li>소요 시간: 약 ${m.duration}</li>
               <li>응답 중간에 자동 저장되며 링크를 다시 열면 이어서 작성할 수 있습니다.</li>
+              <li>응답 제출 시 등록하신 이메일로 <strong>완료 안내 메일이 자동 발송</strong>됩니다 (본인 응답 확인 링크 포함).</li>
               <li>모든 응답은 「통계법」 제33조(비밀의 보호)에 따라 통계 목적으로만 사용됩니다.</li>
             </ul>
           </div>
 
           <div class="register-card register-reward">
             <h2>🎁 사례품 안내</h2>
-            <p>설문에 끝까지 응답해 주신 분께는 감사의 표시로 <strong>모바일 쿠폰</strong>을 발송해 드립니다.
+            <p>설문에 끝까지 응답해 주신 분께는 감사의 표시로 <strong>2만원 상당 상품권(모바일 쿠폰)</strong>을 발송해 드립니다.
                (수령을 원하시는 경우 다음 단계에서 휴대폰 번호 활용에 동의해 주시기 바랍니다.)</p>
           </div>
 
@@ -676,13 +732,13 @@ export class SurveyEngine {
           </div>
 
           <div class="consent-block">
-            <h3>② 선택동의 — 사례품(모바일 쿠폰) 발송 목적</h3>
+            <h3>② 선택동의 — 사례품(2만원 상당 상품권/모바일 쿠폰) 발송 목적</h3>
             <table class="consent-table">
               <tbody>
                 <tr><th>수집 항목</th>
                   <td>이름, 휴대폰 번호</td></tr>
                 <tr><th>수집·이용 목적</th>
-                  <td>설문 참여 사례품(모바일 쿠폰) 발송. <strong>분석·통계 처리에는 사용하지 않습니다.</strong></td></tr>
+                  <td>설문 참여 사례품(2만원 상당 상품권/모바일 쿠폰) 발송. <strong>분석·통계 처리에는 사용하지 않습니다.</strong></td></tr>
                 <tr><th>보유·이용 기간</th>
                   <td>발송 완료 후 즉시 파기 (지급 분쟁 시 6개월까지 한정 보존)</td></tr>
                 <tr><th>거부 권리</th>
@@ -931,6 +987,12 @@ export class SurveyEngine {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (res.status === 410) {
+        this.gate = GATE.CLOSED;
+        this.regSubmitting = false;
+        this.render();
+        return;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `등록 실패 (${res.status})`);
@@ -2205,6 +2267,11 @@ export class SurveyEngine {
         body: JSON.stringify(payload),
       });
 
+      if (res.status === 410) {
+        this.gate = GATE.CLOSED;
+        this.render();
+        return;
+      }
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
 
