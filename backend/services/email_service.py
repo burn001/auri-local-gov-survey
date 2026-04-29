@@ -56,3 +56,23 @@ def send_email(to_email: str, subject: str, html_body: str) -> bool:
     server.sendmail(s.GMAIL_USER, to_email, msg.as_string())
     server.quit()
     return True
+
+
+def send_email_multi(to_list, cc_list=None, *, subject: str, html_body: str) -> bool:
+    """다중 To + Cc 발송. Cc 빈 리스트도 허용."""
+    s = get_settings()
+    cc_list = cc_list or []
+    msg = MIMEMultipart("alternative")
+    msg["From"] = f"AURI 청사관리실태조사 <{s.GMAIL_USER}>"
+    msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    server = smtplib.SMTP("smtp.gmail.com", 587)
+    server.starttls()
+    server.login(s.GMAIL_USER, s.GMAIL_APP_PASSWORD)
+    server.sendmail(s.GMAIL_USER, to_list + cc_list, msg.as_string())
+    server.quit()
+    return True

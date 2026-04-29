@@ -12,7 +12,7 @@ from models import (
     COMMENT_STATUSES,
 )
 from services.db import get_db
-from services.email_service import render_completion, send_email
+from services.email_service import render_completion, send_email, send_email_multi
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,163 @@ async def _get_completed_count(db) -> int:
 
 async def _is_survey_closed(db) -> bool:
     return (await _get_completed_count(db)) >= SURVEY_LIMIT
+
+
+# 50부 단위 마일스톤 보고 메일 — 연구진(김영현·윤호선)에게 진행 현황 통보
+MILESTONES = [50, 100, 150, 200, 250]
+MILESTONE_TO = ["yhkim@auri.re.kr", "hsyoon@auri.re.kr"]
+MILESTONE_CC = ["blaster@auri.re.kr"]
+
+
+async def _gather_milestone_stats(db) -> dict:
+    """카테고리별 응답 수, 사례품 동의자 수 (연구진 제외)."""
+    pipeline_cat = [
+        {"$match": {"submitted_at": {"$ne": None}}},
+        {"$lookup": {
+            "from": "participants",
+            "localField": "token",
+            "foreignField": "token",
+            "as": "p",
+        }},
+        {"$unwind": "$p"},
+        {"$match": {"p.category": {"$ne": "연구진"}}},
+        {"$group": {"_id": "$p.category", "count": {"$sum": 1}}},
+    ]
+    by_cat = {}
+    async for doc in db.responses.aggregate(pipeline_cat):
+        by_cat[doc["_id"]] = doc["count"]
+
+    pipeline_reward = [
+        {"$match": {"submitted_at": {"$ne": None}}},
+        {"$lookup": {
+            "from": "participants",
+            "localField": "token",
+            "foreignField": "token",
+            "as": "p",
+        }},
+        {"$unwind": "$p"},
+        {"$match": {"p.category": {"$ne": "연구진"}, "p.consent_reward": True}},
+        {"$count": "n"},
+    ]
+    reward = 0
+    async for doc in db.responses.aggregate(pipeline_reward):
+        reward = doc["n"]
+
+    return {
+        "metro_responded": by_cat.get("광역자치단체", 0),
+        "metro_total": await db.participants.count_documents({"category": "광역자치단체"}),
+        "base_responded": by_cat.get("기초자치단체", 0),
+        "base_total": await db.participants.count_documents({"category": "기초자치단체"}),
+        "reward_consenters": reward,
+    }
+
+
+def _render_milestone_html(milestone: int, completed: int, stats: dict, admin_url: str) -> str:
+    pct = round(completed / SURVEY_LIMIT * 100, 1)
+    metro_pct = round(stats["metro_responded"] / max(stats["metro_total"], 1) * 100, 1)
+    base_pct = round(stats["base_responded"] / max(stats["base_total"], 1) * 100, 1)
+    closing_block = ""
+    if milestone >= SURVEY_LIMIT:
+        closing_block = (
+            '<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px">'
+            '<tr><td style="background:#fff4e6;border-left:4px solid #d97706;padding:18px 22px;border-radius:6px;font-size:13px;color:#5b3a14;line-height:1.8">'
+            '<strong>📌 응답 모집 마감</strong><br>'
+            f'목표 {SURVEY_LIMIT}부에 도달하여 신규 응답 접수가 자동 차단되었습니다. '
+            '신규 진입·이어작성·리뷰 페이지 접근 모두 마감 안내 화면으로 전환됩니다 (연구진 토큰 예외).'
+            '</td></tr></table>'
+        )
+    return f"""
+    <div style="font-family:'Noto Sans KR',sans-serif;font-size:14px;line-height:1.7;color:#222;max-width:640px;margin:0 auto;padding:24px">
+      <h2 style="font-size:18px;margin:0 0 8px">청사관리 실태조사 응답 {milestone}부 도달 안내</h2>
+      <p style="color:#666;font-size:13px;margin:0 0 24px">자동 발송 — AURI 청사관리실태조사 시스템</p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px">
+        <tr><td style="background:#f0f4f8;border-left:4px solid #2c2c2c;padding:18px 22px;border-radius:6px">
+          <strong style="font-size:15px">유효 완료 응답: {completed}부 / {SURVEY_LIMIT}부 ({pct}%)</strong>
+          <div style="color:#666;font-size:12px;margin-top:6px">연구진 응답 제외 · 자가등록(self) + 사전 import 합산</div>
+        </td></tr>
+      </table>
+
+      {closing_block}
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e0e0e0;border-radius:6px;margin:0 0 24px">
+        <tr><td style="padding:18px 22px">
+          <strong style="display:block;margin:0 0 12px;font-size:14px">카테고리별 응답 현황</strong>
+          <table width="100%" cellpadding="6" cellspacing="0" style="font-size:13px">
+            <tr><td style="color:#666">광역자치단체</td>
+                <td align="right"><strong>{stats['metro_responded']}</strong> / {stats['metro_total']}명 ({metro_pct}%)</td></tr>
+            <tr><td style="color:#666">기초자치단체</td>
+                <td align="right"><strong>{stats['base_responded']}</strong> / {stats['base_total']}명 ({base_pct}%)</td></tr>
+            <tr><td style="color:#666;border-top:1px solid #eee;padding-top:10px">사례품 동의 응답자</td>
+                <td align="right" style="border-top:1px solid #eee;padding-top:10px"><strong>{stats['reward_consenters']}</strong>명</td></tr>
+          </table>
+        </td></tr>
+      </table>
+
+      <p style="font-size:13px;color:#444;line-height:1.8;margin:0 0 16px">
+        상세 내역은 <a href="{admin_url}" style="color:#2c2c2c">관리자 페이지</a>에서 확인하실 수 있습니다.
+        (각자 보관하신 관리자 토큰을 사용해 주십시오.)
+      </p>
+
+      <p style="font-size:12px;color:#999;margin:0">
+        ― AURI 청사관리실태조사 시스템 (자동 발송 · 회신 불가)
+      </p>
+    </div>
+    """
+
+
+async def _send_milestone_emails_if_needed(db) -> None:
+    """제출 후 호출. 50/100/150/200/250 마일스톤 도달 + 미발송이면 자동 발송.
+    이미 발송된 마일스톤은 email_logs(type=milestone, status=sent)로 식별하여 스킵.
+    실패해도 응답 처리는 영향받지 않음."""
+    s = get_settings()
+    if not s.GMAIL_USER or not s.GMAIL_APP_PASSWORD:
+        return
+
+    completed = await _get_completed_count(db)
+
+    pending = []
+    for m in MILESTONES:
+        if completed < m:
+            break
+        already = await db.email_logs.find_one(
+            {"type": "milestone", "milestone": m, "status": "sent"}
+        )
+        if not already:
+            pending.append(m)
+
+    if not pending:
+        return
+
+    stats = await _gather_milestone_stats(db)
+    admin_url = f"{s.SURVEY_BASE_URL}/admin/"
+
+    for m in pending:
+        subject = f"[AURI 청사관리실태조사] 응답 {m}부 도달 — 진행 현황 보고"
+        log_doc = {
+            "type": "milestone",
+            "milestone": m,
+            "completed_at_send": completed,
+            "to": MILESTONE_TO,
+            "cc": MILESTONE_CC,
+            "subject": subject,
+            "admin_email": "system",
+            "admin_name": "마일스톤 자동 발송",
+            "sent_at": datetime.now(timezone.utc),
+        }
+        try:
+            html = _render_milestone_html(m, completed, stats, admin_url)
+            send_email_multi(MILESTONE_TO, MILESTONE_CC, subject=subject, html_body=html)
+            log_doc.update({"status": "sent", "error": ""})
+            await db.email_logs.insert_one(log_doc)
+        except Exception as e:
+            err = str(e)
+            logger.warning(f"Milestone {m}부 send failed: {err}")
+            log_doc.update({"status": "failed", "error": err})
+            try:
+                await db.email_logs.insert_one(log_doc)
+            except Exception:
+                pass
 
 
 async def _send_completion_email(participant: dict, token: str) -> None:
@@ -548,6 +705,7 @@ async def submit_response(body: ResponseSubmit, request: Request):
         )
         if participant.get("category") != "연구진":
             await _send_completion_email(participant, body.token)
+            await _send_milestone_emails_if_needed(db)
         return {"status": "created", "token": body.token}
 
     record = ResponseRecord(
@@ -562,6 +720,7 @@ async def submit_response(body: ResponseSubmit, request: Request):
     await db.responses.insert_one(record.model_dump())
     if participant.get("category") != "연구진":
         await _send_completion_email(participant, body.token)
+        await _send_milestone_emails_if_needed(db)
     return {"status": "created", "token": body.token}
 
 
