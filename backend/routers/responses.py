@@ -354,7 +354,11 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     - email은 필수 (완료 안내 메일 발송용). 분석·식별 목적으로는 사용하지 않음.
     - 분류 정보(category/org/dept...)는 통계법 §33 처리되므로 동의 대상 아님.
     - 사례품 동의(consent_reward) 시에만 reward_name·reward_phone 수집.
-    - 토큰은 random uuid. 동일 email은 신규 등록 차단(409) — 분실 시 /survey/recover.
+    - 토큰은 random uuid. 신규 email은 새 토큰 발급.
+    - imported 명단 & 미응답: 폼 입력값으로 정보 갱신 + source='self' 전환 + 기존 토큰 노출(smooth 진입).
+      신원 사칭 방지를 위해 폼 입력값이 imported 정보를 덮어씀.
+    - 이미 응답 완료: 차단 (재등록 의미 없음, /recover로 리뷰 링크).
+    - 이미 self 등록: 차단 (분실 시 /recover).
     """
     s = get_settings()
 
@@ -374,13 +378,18 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     db = get_db()
     existing = await db.participants.find_one({"email": email})
 
-    # 동일 email은 신규 등록 자체를 차단 — 본인 확인은 메일 수신으로만 검증.
-    # 토큰을 응답에 노출하지 않고, 분실 복구는 /survey/recover로 처리.
+    # 응답 완료자·self 기등록자는 차단 — 분실 시 /recover.
     if existing:
-        raise HTTPException(
-            409,
-            "이 이메일로 이미 등록되어 있습니다. 처음 등록 시 받으신 메일의 링크로 접속하시거나, 메일을 못 받으셨다면 '토큰 재발송'을 요청해 주십시오.",
-        )
+        if existing.get("responded"):
+            raise HTTPException(
+                409,
+                "이 이메일로 이미 응답을 제출하셨습니다. 응답 확인·수정은 '토큰 재발송'을 요청해 메일의 리뷰 링크로 접속해 주십시오.",
+            )
+        if existing.get("source") == "self":
+            raise HTTPException(
+                409,
+                "이 이메일로 이미 등록되어 있습니다. 처음 등록 시 받으신 메일의 링크로 접속하시거나, 메일을 못 받으셨다면 '토큰 재발송'을 요청해 주십시오.",
+            )
 
     if await _is_survey_closed(db):
         raise HTTPException(
@@ -394,8 +403,57 @@ async def self_register(body: SelfRegisterRequest, request: Request):
 
     # 사례품 동의 시 입력한 reward_name이 곧 응답자 이름. 미동의 시에는 익명 응답으로 빈 문자열.
     name = (body.reward_name or "").strip() if body.consent_reward else ""
-    token = uuid.uuid4().hex[:16]
 
+    # imported 명단 & 미응답 → 폼 입력값으로 정보 갱신 후 기존 토큰 노출 (smooth 진입).
+    if existing:
+        token = existing["token"]
+        # 변경 전 스냅샷을 participants_backup에 저장 (update_participant와 동일 패턴).
+        last_backup = await db.participants_backup.find_one(
+            {"token": token}, sort=[("version", -1)]
+        )
+        next_version = (last_backup.get("version", 0) + 1) if last_backup else 1
+        snapshot = {k: v for k, v in existing.items() if k != "_id"}
+        await db.participants_backup.insert_one({
+            "token": token,
+            "version": next_version,
+            "backed_up_at": now,
+            "ip": ip,
+            "user_agent": ua,
+            "snapshot": snapshot,
+            "source_action": "self_register_promote",
+        })
+
+        update_fields = {
+            "name": name,
+            "org": body.org.strip(),
+            "category": body.category,
+            "dept": (body.dept or "").strip(),
+            "team": (body.team or "").strip(),
+            "position": (body.position or "").strip(),
+            "rank": (body.rank or "").strip(),
+            "duty": (body.duty or "").strip(),
+            "source": "self",
+            "consent_pi": True,
+            "consent_pi_at": now,
+            "consent_reward": bool(body.consent_reward),
+            "consent_reward_at": now if body.consent_reward else None,
+            "reward_name": body.reward_name.strip() if body.consent_reward else "",
+            "reward_phone": body.reward_phone.strip() if body.consent_reward else "",
+            "register_ip": ip,
+            "register_ua": ua,
+            "register_updated_at": now,
+            "self_registered_at": now,
+            "updated_at": now,
+        }
+        await db.participants.update_one({"token": token}, {"$set": update_fields})
+
+        return {
+            "status": "promoted",
+            "token": token,
+            "survey_url": f"{s.SURVEY_BASE_URL}/?token={token}",
+        }
+
+    token = uuid.uuid4().hex[:16]
     doc = {
         "token": token,
         "email": email,
