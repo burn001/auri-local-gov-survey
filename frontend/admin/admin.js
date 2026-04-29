@@ -59,6 +59,7 @@ document.querySelectorAll('.nav-item[data-page]').forEach(el => {
     if (page === 'dashboard') loadDashboard();
     if (page === 'participants') loadParticipants();
     if (page === 'responses') loadResponses();
+    if (page === 'self') loadSelfView();
   });
 });
 
@@ -122,6 +123,13 @@ function fmtKST(iso) {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(d).replace(', ', ' ');
+}
+
+// 진입 출처 라벨링.
+function sourceBadge(src) {
+  return (src || 'imported') === 'self'
+    ? '<span class="badge badge-purple">자가등록</span>'
+    : '<span class="badge badge-gray">사전 import</span>';
 }
 
 function relTime(iso) {
@@ -214,9 +222,7 @@ function renderParticipants() {
         : ((count > 0 || p.email_sent) ? '<span class="badge badge-orange">미응답</span>' : '<span class="badge badge-gray">-</span>');
       const link = `${SURVEY_BASE}/?token=${p.token}`;
       const source = p.source || 'imported';
-      const sourceBadge = source === 'self'
-        ? '<span class="badge badge-purple">자가등록</span>'
-        : '<span class="badge badge-gray">사전 import</span>';
+      const srcBadge = sourceBadge(source);
       let rewardCell = '<span style="color:#bbb">-</span>';
       if (p.consent_reward) {
         const rn = (p.reward_name || '').replace(/'/g, "&#039;");
@@ -233,7 +239,7 @@ function renderParticipants() {
         <td>${p.name}</td>
         <td>${p.org || ''}</td>
         <td><span class="badge badge-blue">${p.category || ''}</span></td>
-        <td>${sourceBadge}</td>
+        <td>${srcBadge}</td>
         <td style="font-size:12px">${p.email}</td>
         <td style="min-width:180px">${sendBadge} ${logBtn}</td>
         <td style="min-width:150px">${respBadge}</td>
@@ -544,21 +550,156 @@ async function loadResponses() {
       const commentBadge = cnt > 0
         ? `<span class="badge badge-orange" style="margin-left:4px">💬 ${cnt}</span>`
         : '';
-      const sourceBadge = (r.source === 'self')
-        ? '<span class="badge badge-purple">자가등록</span>'
-        : '<span class="badge badge-gray">사전</span>';
+      const srcBadge = sourceBadge(r.source);
       const rewardMark = r.consent_reward ? ' <span title="사례품 동의" style="color:#7c3aed">🎁</span>' : '';
       return `<tr>
         <td>${r.name || ''}${rewardMark}</td>
         <td>${r.org || ''}</td>
         <td><span class="badge badge-blue">${r.category || ''}</span></td>
-        <td>${sourceBadge}</td>
+        <td>${srcBadge}</td>
         <td style="font-size:12px">${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ko') : ''}</td>
         <td style="font-size:12px">${r.updated_at ? new Date(r.updated_at).toLocaleString('ko') : '-'}</td>
         <td><button class="btn btn-sm btn-outline" onclick="showResponseDetail('${r.token}')">열기</button>${commentBadge}</td>
       </tr>`;
     }).join('')}</tbody>
   </table>`;
+}
+
+// ── 자가등록 운영 (page-self) ──
+// 공개 단일 링크로 직접 등록한(source==='self') 응답자만 별도로 모아서 보여 준다.
+// '대상자 & 이메일' 페이지 상태(pCache/pSelected)와 격리되어 동작한다.
+let selfCache = { participants: [], responses: [] };
+
+async function loadSelfView() {
+  try {
+    // self 참가자 + self 응답 동시 조회 (응답 목록은 server-side source 필터가 없어 client 측에서 거른다)
+    const [pData, rData] = await Promise.all([
+      api('/api/admin/participants?source=self&limit=5000'),
+      api('/api/admin/responses?limit=5000'),
+    ]);
+    const participants = pData.data || [];
+    const responses = (rData.data || []).filter(r => r.source === 'self');
+    selfCache = { participants, responses };
+
+    renderSelfStats();
+    renderSelfRespondedTable();
+    renderSelfPendingTable();
+  } catch (e) {
+    toast('자가등록 운영 화면 로드 실패: ' + (e.message || e), 'error');
+  }
+}
+
+function renderSelfStats() {
+  const ps = selfCache.participants;
+  const total = ps.length;
+  const responded = ps.filter(p => p.responded).length;
+  const pct = total ? (responded / total * 100).toFixed(1) : '0.0';
+  const rewardEligible = ps.filter(p => p.consent_reward && p.responded).length;
+  document.getElementById('self-stat-cards').innerHTML = `
+    <div class="stat-card"><div class="label">자가등록자</div><div class="value">${total}</div></div>
+    <div class="stat-card"><div class="label">응답 완료</div><div class="value">${responded}</div></div>
+    <div class="stat-card"><div class="label">응답률</div><div class="value">${pct}%</div></div>
+    <div class="stat-card"><div class="label">사례품 동의자(응답 완료)</div><div class="value">${rewardEligible}</div></div>
+  `;
+}
+
+function renderSelfRespondedTable() {
+  const respondedTokens = new Set(selfCache.participants.filter(p => p.responded).map(p => p.token));
+  const rows = selfCache.responses
+    .filter(r => respondedTokens.has(r.token))
+    .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+  document.getElementById('self-resp-count').textContent = String(rows.length);
+  if (rows.length === 0) {
+    document.getElementById('self-resp-table').innerHTML = '<div style="padding:18px;color:#94a3b8;font-size:13px">아직 자가등록 응답이 없습니다.</div>';
+    return;
+  }
+  document.getElementById('self-resp-table').innerHTML = `<table>
+    <thead><tr><th>이름</th><th>지자체</th><th>구분</th><th>이메일</th><th>사례품</th><th>제출일시</th><th>수정일시</th><th>상세</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const cnt = r.comment_count || 0;
+      const commentBadge = cnt > 0 ? `<span class="badge badge-orange" style="margin-left:4px">💬 ${cnt}</span>` : '';
+      const rewardCell = r.consent_reward
+        ? `<span title="사례품 동의" style="color:#7c3aed">🎁</span> ${escapeHtml(r.reward_name || '-')}`
+        : '<span style="color:#aaa;font-size:11px">미동의</span>';
+      return `<tr>
+        <td>${escapeHtml(r.name || '-')}</td>
+        <td>${escapeHtml(r.org || '')}</td>
+        <td><span class="badge badge-blue">${escapeHtml(r.category || '')}</span></td>
+        <td style="font-size:12px">${escapeHtml(r.email || '')}</td>
+        <td style="font-size:12px">${rewardCell}</td>
+        <td style="font-size:12px">${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ko') : ''}</td>
+        <td style="font-size:12px">${r.updated_at ? new Date(r.updated_at).toLocaleString('ko') : '-'}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="showResponseDetail('${r.token}')">열기</button>${commentBadge}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function renderSelfPendingTable() {
+  const rows = selfCache.participants
+    .filter(p => !p.responded)
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  document.getElementById('self-pend-count').textContent = String(rows.length);
+  if (rows.length === 0) {
+    document.getElementById('self-pend-table').innerHTML = '<div style="padding:18px;color:#94a3b8;font-size:13px">미응답 자가등록자가 없습니다.</div>';
+    return;
+  }
+  document.getElementById('self-pend-table').innerHTML = `<table>
+    <thead><tr><th>이메일</th><th>지자체</th><th>구분</th><th>등록일시</th><th>마지막 메일</th></tr></thead>
+    <tbody>${rows.map(p => {
+      const lastMail = p.email_last_sent_at ? fmtKST(p.email_last_sent_at) : '-';
+      return `<tr>
+        <td style="font-size:12px">${escapeHtml(p.email || '')}</td>
+        <td>${escapeHtml(p.org || '')}</td>
+        <td><span class="badge badge-blue">${escapeHtml(p.category || '')}</span></td>
+        <td style="font-size:12px">${p.created_at ? fmtKST(p.created_at) : '-'}</td>
+        <td style="font-size:12px;color:#64748b">${lastMail}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+async function exportSelfResponseCSV() {
+  // 백엔드 /export?source=self 사용 — 대용량에서도 안전.
+  try {
+    const res = await fetch(API + '/api/admin/export?source=self', {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN },
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `survey_responses_self_${Date.now()}.csv`;
+    a.click();
+    toast('자가등록 응답 CSV 다운로드 완료');
+  } catch (e) {
+    toast('CSV 다운로드 실패: ' + (e.message || e), 'error');
+  }
+}
+
+function exportSelfRewardCSV() {
+  // 자가등록 + 사례품 동의 + 응답 완료. selfCache.participants 기준.
+  const eligible = selfCache.participants.filter(p => p.consent_reward && p.responded);
+  if (eligible.length === 0) {
+    toast('사례품 발송 대상이 없습니다 (자가등록 + 동의 + 응답 완료 기준).', 'error');
+    return;
+  }
+  const rows = [['이름', '이메일', '지자체', '구분', '수령자명', '휴대폰', '응답일시', '동의일시']];
+  eligible.forEach(p => {
+    rows.push([
+      p.name || '', p.email || '', p.org || '', p.category || '',
+      p.reward_name || '', p.reward_phone || '',
+      p.response_submitted_at ? fmtKST(p.response_submitted_at) : '',
+      p.consent_reward_at ? fmtKST(p.consent_reward_at) : '',
+    ]);
+  });
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `reward_recipients_self_${Date.now()}.csv`;
+  a.click();
+  toast(`사례품 명단 ${eligible.length}건 다운로드`);
 }
 
 // ── Threads (관리자 측) ──
@@ -968,9 +1109,7 @@ async function showResponseDetail(token) {
 
   await fetchThreads();
 
-  const sourceBadge = (row.source === 'self')
-    ? '<span class="badge badge-purple">자가등록</span>'
-    : '<span class="badge badge-gray">사전 import</span>';
+  const srcBadge = sourceBadge(row.source);
   const rewardLine = row.consent_reward
     ? `<dt>사례품 수령</dt><dd>🎁 ${escapeHtml(row.reward_name || '-')} · <code style="font-size:11px">${escapeHtml(row.reward_phone || '-')}</code></dd>`
     : (row.source === 'self' ? '<dt>사례품 수령</dt><dd style="color:#999">미동의</dd>' : '');
@@ -980,7 +1119,7 @@ async function showResponseDetail(token) {
       <dl>
         <dt>응답자</dt><dd>${escapeHtml(row.name || '-')}${row.email ? ` <span style="color:#888;font-size:11px">(${escapeHtml(row.email)})</span>` : ''}</dd>
         <dt>소속</dt><dd>${escapeHtml(row.org || '-')}</dd>
-        <dt>구분</dt><dd><span class="badge badge-blue">${escapeHtml(row.category || '-')}</span> ${sourceBadge}</dd>
+        <dt>구분</dt><dd><span class="badge badge-blue">${escapeHtml(row.category || '-')}</span> ${srcBadge}</dd>
         ${rewardLine}
         <dt>토큰</dt><dd><code style="font-size:11px">${escapeHtml(token)}</code></dd>
         <dt>제출</dt><dd style="font-size:12px">${row.submitted_at ? new Date(row.submitted_at).toLocaleString('ko') : '-'}</dd>

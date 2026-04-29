@@ -125,7 +125,11 @@ async def list_responses(
 
 
 @router.get("/export")
-async def export_csv(admin: dict = Depends(verify_admin_token)):
+async def export_csv(
+    admin: dict = Depends(verify_admin_token),
+    source: Optional[str] = None,
+):
+    """응답 CSV 내보내기. source=self|imported 시 해당 출처 응답자만 추출."""
     db = get_db()
     import csv, io, json as _json
     from fastapi.responses import StreamingResponse
@@ -139,8 +143,12 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
             "as": "p",
         }},
         {"$unwind": {"path": "$p", "preserveNullAndEmptyArrays": True}},
-        {"$sort": {"submitted_at": 1}},
     ]
+    if source == "self":
+        pipeline.append({"$match": {"p.source": "self"}})
+    elif source == "imported":
+        pipeline.append({"$match": {"$or": [{"p.source": "imported"}, {"p.source": {"$exists": False}}]}})
+    pipeline.append({"$sort": {"submitted_at": 1}})
     cursor = db.responses.aggregate(pipeline)
     docs = [doc async for doc in cursor]
 
@@ -154,7 +162,7 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
 
     output = io.StringIO()
     writer = csv.writer(output)
-    header = ["token", "name", "org", "category", "submitted_at", "updated_at"] + sorted_keys
+    header = ["token", "name", "org", "category", "source", "submitted_at", "updated_at"] + sorted_keys
     writer.writerow(header)
 
     for d in docs:
@@ -165,6 +173,7 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
             p.get("name", ""),
             p.get("org", ""),
             p.get("category", ""),
+            p.get("source", "imported"),
             str(d.get("submitted_at", "")),
             str(d.get("updated_at", "")),
         ]
@@ -177,10 +186,11 @@ async def export_csv(admin: dict = Depends(verify_admin_token)):
         writer.writerow(row)
 
     output.seek(0)
+    suffix = f"_{source}" if source in ("self", "imported") else ""
     return StreamingResponse(
         iter(["\ufeff" + output.getvalue()]),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=survey_responses.csv"},
+        headers={"Content-Disposition": f"attachment; filename=survey_responses{suffix}.csv"},
     )
 
 

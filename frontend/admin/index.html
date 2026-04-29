@@ -31,6 +31,7 @@
     <a class="nav-item active" data-page="dashboard">대시보드</a>
     <a class="nav-item" data-page="participants">대상자 & 이메일</a>
     <a class="nav-item" data-page="responses">응답 조회</a>
+    <a class="nav-item" data-page="self">자가등록 운영</a>
     <a class="nav-item" style="margin-top:auto;color:#666;font-size:12px" onclick="logout()">로그아웃</a>
   </nav>
 
@@ -80,6 +81,25 @@
         <div id="p-table"></div>
         <div id="p-pagination" class="pagination"></div>
       </div>
+    </div>
+
+    <!-- Self-Registered (자가등록 응답자 전용 운영 화면) -->
+    <div id="page-self" class="page">
+      <h2 class="page-title">자가등록 운영</h2>
+      <p style="font-size:12px;color:#64748b;margin:-6px 0 16px">
+        공개 단일 링크로 직접 등록한 응답자만 추려 조회·관리합니다. 대량 발송·재발송은
+        <a href="#" onclick="document.querySelector('[data-page=participants]').click();return false" style="color:#2563eb">대상자 &amp; 이메일</a> 페이지에서 출처 필터를 활용하세요.
+      </p>
+      <div id="self-stat-cards" class="stat-grid"></div>
+      <div style="display:flex;gap:8px;margin:16px 0 12px;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="exportSelfResponseCSV()">자가등록 응답 CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSelfRewardCSV()">사례품 동의 명단 CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="loadSelfView()">새로고침</button>
+      </div>
+      <h3 style="font-size:14px;font-weight:600;margin:18px 0 8px">자가등록 응답 완료 (<span id="self-resp-count">0</span>)</h3>
+      <div class="table-wrap"><div id="self-resp-table"></div></div>
+      <h3 style="font-size:14px;font-weight:600;margin:24px 0 8px">자가등록 후 미응답 (<span id="self-pend-count">0</span>)</h3>
+      <div class="table-wrap"><div id="self-pend-table"></div></div>
     </div>
 
     <!-- Responses -->
