@@ -176,6 +176,7 @@ async def _send_milestone_emails_if_needed(db) -> None:
 
     for m in pending:
         subject = f"[AURI 청사관리실태조사] 응답 {m}부 도달 — 진행 현황 보고"
+        html = _render_milestone_html(m, completed, stats, admin_url)
         log_doc = {
             "type": "milestone",
             "milestone": m,
@@ -183,12 +184,12 @@ async def _send_milestone_emails_if_needed(db) -> None:
             "to": MILESTONE_TO,
             "cc": MILESTONE_CC,
             "subject": subject,
+            "html_body": html,  # retry CLI가 send_email_multi로 재발송할 수 있게 보존
             "admin_email": "system",
             "admin_name": "마일스톤 자동 발송",
             "sent_at": datetime.now(timezone.utc),
         }
         try:
-            html = _render_milestone_html(m, completed, stats, admin_url)
             send_email_multi(MILESTONE_TO, MILESTONE_CC, subject=subject, html_body=html)
             log_doc.update({"status": "sent", "error": ""})
             await db.email_logs.insert_one(log_doc)
@@ -227,6 +228,7 @@ async def _send_completion_email(participant: dict, token: str) -> None:
         "category": participant.get("category", ""),
         "type": "completion",
         "subject": subject,
+        "html_body": html,  # 실패 시 retry CLI가 동일 본문으로 재발송할 수 있게 보존
         "admin_email": "system",
         "admin_name": "자동 발송",
         "sent_at": now,
@@ -543,6 +545,7 @@ async def recover_token(body: RecoverRequest):
         "category": participant.get("category", ""),
         "type": "recovery",
         "subject": subject,
+        "html_body": html,  # retry CLI가 동일 본문으로 재발송할 수 있게 보존
         "admin_email": "system",
         "admin_name": "자동 재발송",
         "sent_at": datetime.utcnow(),

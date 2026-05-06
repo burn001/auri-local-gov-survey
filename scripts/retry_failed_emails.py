@@ -1,29 +1,28 @@
 """
-email_logs.status=='failed' 항목을 type별로 본문 재구성해 재발송한다.
+email_logs.status=='failed' 항목을 재발송한다.
 
-운영 시나리오 (`_STATUS.md` 5/6 참조):
-    Gmail SMTP 일일 500건 한도 초과 등으로 발송이 누락된 메일을 한도 회복 후 일괄 재시도.
-    원본 row는 그대로 두고, 새 row를 동일 schema로 insert해 시간순 이력을 보존한다.
+우선순위:
+    1. log['html_body']가 저장돼 있으면 동일 본문·제목으로 그대로 재발송 (모든 type 지원).
+       milestone은 to/cc 리스트가 함께 저장되므로 send_email_multi로 처리.
+    2. html_body가 없으면 (구버전 row) type 기반 본문 재구성으로 fallback.
+       completion / recovery / invite는 token으로 본문 재구성 가능.
+       milestone / custom / reminder는 fallback 불가 → SKIP.
 
-지원 type:
-    completion / recovery / invite — participants에서 token 조회 후 본문 재생성.
-    milestone / custom / reminder — 본문이 동적이거나 admin 입력값이라 자동 재구성 불가 → 스킵.
-
-DB 직접 접근. backend 컨테이너 내부에서 motor 대신 pymongo로 동기 처리한다 (ssh 터널 + 로컬
-실행도 가능). 운영 패턴은 `comments_cli.py`와 동일하게 docker run --env-file 형태.
+원본 row는 그대로 두고, 새 row를 동일 schema로 insert해 시간순 이력을 보존한다.
+새 row는 batch_id='retry-YYYYMMDDTHHMMSSZ' + retry_of=원본 _id.
 
 사용 예:
-    # 미리 보기 (dry-run) — 발송 시도 X, 대상만 출력
+    # 미리 보기 (dry-run)
     python scripts/retry_failed_emails.py --dry-run
-
-    # type 한정
-    python scripts/retry_failed_emails.py --type completion
 
     # 기간 한정 (UTC ISO yyyy-mm-dd)
     python scripts/retry_failed_emails.py --since 2026-05-04 --until 2026-05-05
 
     # 한도 회피용 throttle (초 단위 sleep)
     python scripts/retry_failed_emails.py --throttle 1.5 --limit 50
+
+    # type 한정
+    python scripts/retry_failed_emails.py --type reminder
 """
 import argparse
 import json
@@ -36,17 +35,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from pymongo import MongoClient
-from services.email_service import send_email, render_completion, render_email
+from services.email_service import (
+    send_email,
+    send_email_multi,
+    render_completion,
+    render_email,
+)
 from config import get_settings
 
 
-SUPPORTED_TYPES = {"completion", "recovery", "invite"}
-SKIP_TYPES = {"milestone", "custom", "reminder"}
+# token으로 본문 재구성 가능한 type (구버전 row html_body 부재 시 fallback)
+RECONSTRUCTIBLE_TYPES = {"completion", "recovery", "invite"}
+ALL_TYPES = {"completion", "recovery", "invite", "milestone", "custom", "reminder"}
 
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--type", choices=sorted(SUPPORTED_TYPES) + ["all"], default="all")
+    ap.add_argument("--type", choices=sorted(ALL_TYPES) + ["all"], default="all")
     ap.add_argument("--since", help="UTC ISO yyyy-mm-dd (sent_at 시작)")
     ap.add_argument("--until", help="UTC ISO yyyy-mm-dd (sent_at 끝, exclusive)")
     ap.add_argument("--limit", type=int, default=0, help="0=무제한")
@@ -61,8 +66,6 @@ def build_query(args) -> dict:
     q = {"status": "failed"}
     if args.type != "all":
         q["type"] = args.type
-    else:
-        q["type"] = {"$in": list(SUPPORTED_TYPES)}
     if args.since or args.until:
         rng = {}
         if args.since:
@@ -73,9 +76,9 @@ def build_query(args) -> dict:
     return q
 
 
-def reconstruct(log: dict, db, base_url: str):
-    """type별 본문 재구성. participant 정보·token으로 link/subject 재생성.
-    반환: (subject, html, error_or_None). error 있으면 스킵.
+def reconstruct_from_token(log: dict, db, base_url: str):
+    """html_body 없는 구버전 row의 fallback. token으로 participants 조회 후 본문 재생성.
+    completion / recovery / invite만 지원. 반환: (subject, html, error_or_None).
     """
     token = log.get("token")
     if not token:
@@ -91,37 +94,45 @@ def reconstruct(log: dict, db, base_url: str):
     )
     org = participant.get("org", "")
     base = (base_url or "").rstrip("/")
-
     t = log.get("type")
+
     if t == "completion":
-        review_url = f"{base}/?token={token}&review=1"
         return (
             "[AURI 청사관리실태조사] 응답 완료 안내 — 내 응답 확인 링크",
-            render_completion(name, org, review_url),
+            render_completion(name, org, f"{base}/?token={token}&review=1"),
             None,
         )
     if t == "recovery":
-        # 원본 시점에 응답을 냈는지 여부에 따라 invite/review로 분기. 현재 시점 기준으로 재판단.
         existing_resp = db.responses.find_one({"token": token, "submitted_at": {"$ne": None}})
         if existing_resp:
-            link_url = f"{base}/?token={token}&review=1"
             return (
                 "[AURI 청사관리 실태조사] 응답 확인·수정 링크 재발송",
-                render_completion(name, org, link_url),
+                render_completion(name, org, f"{base}/?token={token}&review=1"),
                 None,
             )
-        link_url = f"{base}/?token={token}"
         return (
             "[AURI 청사관리 실태조사] 설문 참여 링크 재발송",
-            render_email(name, org, link_url),
+            render_email(name, org, f"{base}/?token={token}"),
             None,
         )
     if t == "invite":
-        survey_url = f"{base}/?token={token}"
-        # 원본 subject 보존 — admin이 발송한 invite 제목을 유지하면 동일 스레드로 보임
         subject = log.get("subject") or "[AURI 청사관리 실태조사] 설문 참여 안내"
-        return subject, render_email(name, org, survey_url), None
-    return None, None, f"미지원 type: {t}"
+        return subject, render_email(name, org, f"{base}/?token={token}"), None
+    return None, None, f"fallback 불가 type: {t}"
+
+
+def send_for(log: dict, subject: str, html: str):
+    """type별 발송 분기 — milestone은 send_email_multi, 나머지는 send_email."""
+    if log.get("type") == "milestone":
+        to_list = log.get("to") or []
+        cc_list = log.get("cc") or []
+        if not to_list:
+            raise RuntimeError("milestone log에 to 필드 없음")
+        send_email_multi(to_list, cc_list, subject=subject, html_body=html)
+    else:
+        if not log.get("email"):
+            raise RuntimeError("email 필드 없음")
+        send_email(log["email"], subject, html)
 
 
 def main():
@@ -142,23 +153,35 @@ def main():
     print(f"[query] {json.dumps({**q, 'sent_at': str(q.get('sent_at', ''))}, ensure_ascii=False, default=str)}")
     print(f"[match] {len(logs)}건")
     print(f"[mode]  {'DRY-RUN' if args.dry_run else 'SEND'}  base_url={s.SURVEY_BASE_URL}")
-    if args.type == "all":
-        skipped = list(db.email_logs.find({"status": "failed", "type": {"$in": list(SKIP_TYPES)}}))
-        if skipped:
-            print(f"[note]  자동 재구성 불가 type 스킵: {len(skipped)}건 (milestone/custom/reminder — 수동 발송 권장)")
+    print()
 
     sent = failed = skipped_n = 0
     batch_id = "retry-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     for i, log in enumerate(logs, 1):
-        subject, html, err = reconstruct(log, db, s.SURVEY_BASE_URL)
-        head = f"[{i:>3}/{len(logs)}] {log.get('type', '-'):<10} {log.get('email', '-')}"
-        if err:
-            print(f"{head}  SKIP: {err}")
+        target = log.get("email") or (", ".join(log.get("to", [])) if log.get("type") == "milestone" else "?")
+        head = f"[{i:>3}/{len(logs)}] {log.get('type', '-'):<10} {target}"
+
+        # 1) html_body 우선 사용
+        html = log.get("html_body")
+        subject = log.get("subject") or ""
+        source = "stored"
+        err = None
+        if not html:
+            # 2) fallback — token 기반 재구성
+            if log.get("type") in RECONSTRUCTIBLE_TYPES:
+                subject, html, err = reconstruct_from_token(log, db, s.SURVEY_BASE_URL)
+                source = "reconstructed"
+            else:
+                err = f"html_body 없음 + 재구성 불가 ({log.get('type')})"
+
+        if err or not html or not subject:
+            print(f"{head}  SKIP: {err or 'subject/html 없음'}")
             skipped_n += 1
             continue
         if args.dry_run:
-            print(f"{head}  DRY  subject='{subject}'")
+            print(f"{head}  DRY  src={source}  subject='{subject[:60]}'")
             continue
+
         new_log = {
             "batch_id": batch_id,
             "token": log.get("token", ""),
@@ -168,22 +191,29 @@ def main():
             "category": log.get("category", ""),
             "type": log.get("type"),
             "subject": subject,
+            "html_body": html,
             "admin_email": "system",
             "admin_name": "retry CLI",
             "sent_at": datetime.now(timezone.utc),
             "retry_of": log.get("_id"),
             "retry_of_sent_at": log.get("sent_at"),
+            "retry_source": source,
         }
+        if log.get("type") == "milestone":
+            new_log["to"] = log.get("to", [])
+            new_log["cc"] = log.get("cc", [])
+            new_log["milestone"] = log.get("milestone")
+
         try:
-            send_email(log["email"], subject, html)
+            send_for(log, subject, html)
             new_log.update({"status": "sent", "error": ""})
             sent += 1
-            print(f"{head}  SENT")
+            print(f"{head}  SENT  src={source}")
         except Exception as e:
-            err = str(e)
-            new_log.update({"status": "failed", "error": err})
+            err_msg = str(e)
+            new_log.update({"status": "failed", "error": err_msg})
             failed += 1
-            print(f"{head}  FAIL: {err[:120]}")
+            print(f"{head}  FAIL: {err_msg[:120]}")
         try:
             db.email_logs.insert_one(new_log)
         except Exception as ex:

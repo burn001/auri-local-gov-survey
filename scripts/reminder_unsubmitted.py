@@ -158,6 +158,7 @@ def main():
             "category": p.get("category", ""),
             "type": "reminder",
             "subject": args.subject,
+            "html_body": html,  # retry CLI가 동일 본문으로 재발송할 수 있게 보존
             "admin_email": "system",
             "admin_name": "reminder CLI",
             "filter_kind": args.filter,

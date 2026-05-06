@@ -302,6 +302,7 @@ async def send_survey_emails(
             "category": p.get("category", ""),
             "type": email_type,
             "subject": body.subject,
+            "html_body": html,  # retry CLI가 동일 본문으로 재발송할 수 있게 보존
             "admin_email": admin.get("email", ""),
             "admin_name": admin.get("name", ""),
             "sent_at": now,
@@ -394,6 +395,7 @@ async def send_custom_emails(
             "category": p.get("category", ""),
             "type": "custom",
             "subject": subject,
+            "html_body": html,  # retry CLI가 동일 본문으로 재발송할 수 있게 보존
             "admin_email": admin.get("email", ""),
             "admin_name": admin.get("name", ""),
             "sent_at": now,
