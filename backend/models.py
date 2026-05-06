@@ -27,6 +27,10 @@ class Participant(BaseModel):
     reward_name: str = ""
     reward_phone: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # 진행도 추적 — verify_token 호출 시 자동 갱신. 일반 응답자는 응답이
+    # localStorage에만 저장되므로 backend가 잡을 수 있는 마지막 활동 시각.
+    last_seen_at: Optional[datetime] = None
+    verify_count: int = 0
 
 
 class ParticipantOut(BaseModel):

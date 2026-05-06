@@ -313,6 +313,17 @@ async def verify_token(token: str):
             f"설문이 마감되었습니다. (목표 {SURVEY_LIMIT}부 도달) 참여해 주셔서 감사합니다.",
         )
 
+    # 진행도 추적 — 응답 페이지 진입 흔적. 도중 이탈자 식별·reminder 발송 대상 분류용.
+    # 일반 응답자는 응답이 localStorage에만 저장되므로 verify 시점이 backend가 잡을 수 있는
+    # 마지막 활동 시각.
+    await db.participants.update_one(
+        {"token": token},
+        {
+            "$set": {"last_seen_at": datetime.utcnow()},
+            "$inc": {"verify_count": 1},
+        },
+    )
+
     existing = await db.responses.find_one({"token": token}, {"_id": 0})
     has_submitted = bool(existing and existing.get("submitted_at"))
     return {
