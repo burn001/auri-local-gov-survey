@@ -355,10 +355,10 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     - 분류 정보(category/org/dept...)는 통계법 §33 처리되므로 동의 대상 아님.
     - 사례품 동의(consent_reward) 시에만 reward_name·reward_phone 수집.
     - 토큰은 random uuid. 신규 email은 새 토큰 발급.
-    - imported 명단 & 미응답: 폼 입력값으로 정보 갱신 + source='self' 전환 + 기존 토큰 노출(smooth 진입).
-      신원 사칭 방지를 위해 폼 입력값이 imported 정보를 덮어씀.
+    - 기등록자(imported/self) & 미응답: 폼 입력값으로 정보 갱신 + 기존 토큰 노출(smooth 진입).
+      신원 사칭 방지를 위해 폼 입력값이 기존 정보를 덮어씀. SMTP 장애로 메일이 안 가도
+      자가등록 채널 자체는 늘 진입 가능해야 한다는 가용성 원칙이 우선.
     - 이미 응답 완료: 차단 (재등록 의미 없음, /recover로 리뷰 링크).
-    - 이미 self 등록: 차단 (분실 시 /recover).
     """
     s = get_settings()
 
@@ -378,8 +378,9 @@ async def self_register(body: SelfRegisterRequest, request: Request):
     db = get_db()
     existing = await db.participants.find_one({"email": email})
 
-    # 응답 완료자·self 기등록자는 차단 — 분실 시 /recover.
+    # 응답 완료자만 차단 — 응답 확인·수정은 /recover로.
     # 응답 완료 여부는 participants에 필드가 없으므로 responses 컬렉션을 직접 조회.
+    # self/imported 미응답자는 모두 promote 분기로 진행해 폼 입력값 갱신 + 기존 토큰 노출.
     if existing:
         existing_resp = await db.responses.find_one(
             {"token": existing["token"], "submitted_at": {"$ne": None}},
@@ -389,11 +390,6 @@ async def self_register(body: SelfRegisterRequest, request: Request):
             raise HTTPException(
                 409,
                 "이 이메일로 이미 응답을 제출하셨습니다. 응답 확인·수정은 '토큰 재발송'을 요청해 메일의 리뷰 링크로 접속해 주십시오.",
-            )
-        if existing.get("source") == "self":
-            raise HTTPException(
-                409,
-                "이 이메일로 이미 등록되어 있습니다. 처음 등록 시 받으신 메일의 링크로 접속하시거나, 메일을 못 받으셨다면 '토큰 재발송'을 요청해 주십시오.",
             )
 
     if await _is_survey_closed(db):
